@@ -90,8 +90,14 @@ bool String(const Value &v, std::wstring &out) {
   out.pop_back();
   return out.find(L'\0') == std::wstring::npos;
 }
+// One historical registration used this exact bare module name. Never pass
+// it to a loader/search API or resolve it relative to the working directory.
+std::filesystem::path RegisteredPayloadPath(const std::wstring &value) {
+  if(value==L"win_pulseunlock") return Dir().parent_path()/L"win_pulseunlock.dll";
+  return std::filesystem::path(value);
+}
 bool OwnedPath(const std::wstring &s) {
-  auto p=std::filesystem::path(s);
+  auto p=RegisteredPayloadPath(s);
   auto system=Dir().parent_path();
   if(p==system/L"win_pulseunlock.dll" || p==system/L"win-pcbiounlock.dll") return true;
   auto name=p.filename().wstring();
@@ -285,9 +291,10 @@ bool Restore(const std::array<Value,4>& old,const std::array<Value,4>& desired) 
       return Fail("provider-recovery-registration",ERROR_INVALID_DATA);
     std::wstring path;
     if(!String(old[2],path)) return Fail("provider-recovery-path",ERROR_INVALID_DATA);
-    payloadGuard=std::make_unique<LocalShell::StoragePathGuard>(std::filesystem::path(path));
+    const auto resolvedPath=RegisteredPayloadPath(path);
+    payloadGuard=std::make_unique<LocalShell::StoragePathGuard>(resolvedPath);
     if(!payloadGuard->IsValid()) return Fail("provider-recovery-ancestry",ERROR_ACCESS_DENIED);
-    if(!ValidatePayload(path,payload)) return false; // activation stays disabled; keep journal
+    if(!ValidatePayload(resolvedPath,payload)) return false; // activation stays disabled; keep journal
   }
   for(size_t i=1;i<4;++i) if(!WriteValue(old[i])) return false;
   if(!WriteValue(old[0])) return false;
@@ -356,7 +363,7 @@ bool IsInstalled() {
     std::wstring registeredPath;
     if(!String(values[2],registeredPath)) return Fail("provider-probe-path",ERROR_INVALID_DATA);
     HeldFile payload;
-    return ValidatePayload(std::filesystem::path(registeredPath),payload);
+    return ValidatePayload(RegisteredPayloadPath(registeredPath),payload);
   } catch(...) { return Fail("provider-probe",ERROR_GEN_FAILURE); }
 }
 bool Install() {
