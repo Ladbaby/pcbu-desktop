@@ -25,8 +25,6 @@
   "wait_select_user": "Selecione um usuário para desbloquear com seu celular.",
   "wait_client_phone_connect": "Conectando ao telefone...",
   "wait_server_phone_connect": "Aguardando conexão do telefone...",
-  "wait_cloud_request": "Enviando solicitação de desbloqueio...",
-  "wait_cloud_connect": "Conectando à nuvem...",
   "wait_phone_unlock": "Use o telefone para desbloquear...",
   "unlock_success": "Sucesso.",
   "unlock_canceled": "Cancelado.",
@@ -36,17 +34,7 @@
   "unlock_error_data": "Erro: dados inválidos recebidos.",
   "unlock_error_not_paired": "Erro: não pareado no telefone.",
   "unlock_error_app": "Erro desconhecido no app. Entre em contato com o suporte.",
-  "unlock_error_cloud_server_unreachable": "Não foi possível acessar o servidor da nuvem. Verifique sua conexão com a internet.",
-  "unlock_error_cloud_phone_unreachable": "Não foi possível acessar seu telefone. Verifique se ele está online.",
-  "unlock_error_cloud_rate_limited": "Muitas tentativas de desbloqueio. Aguarde um momento e tente novamente.",
-  "unlock_error_cloud_pairing_gone": "Este PC não está mais pareado com seu telefone. Pareie-o novamente.",
-  "unlock_error_cloud_device_stale": "Seu telefone não se conecta há algum tempo. Abra o app no seu telefone e tente novamente.",
-  "unlock_error_cloud_no_subscription": "É necessária uma assinatura ativa da nuvem. Assine pelo app.",
-  "unlock_error_cloud_subscription_stale": "Não foi possível confirmar sua assinatura. Abra o app no seu telefone e tente novamente.",
-  "unlock_error_cloud_subscription_on_hold": "Sua assinatura da nuvem está suspensa porque um pagamento falhou. Atualize sua forma de pagamento no Google Play ou na App Store e tente novamente.",
-  "unlock_error_cloud_subscription_paused": "Sua assinatura da nuvem está pausada. Retome-a no Google Play e tente novamente.",
   "unlock_error_unknown": "Erro desconhecido. Entre em contato com o suporte.",
-
   "service_module": "Módulo de serviço",
   "devices": "Dispositivos",
   "device": "Dispositivo",
@@ -114,7 +102,6 @@
   "manual_enter": "Inserir manualmente",
   "pairing_code": "Código de pareamento",
   "unlock_test": "Teste de desbloqueio",
-
   "install": "Instalar",
   "uninstall": "Desinstalar",
   "reinstall": "Reinstalar",
@@ -124,7 +111,6 @@
   "ports_settings": "Portas",
   "connection_settings": "Conexão",
   "service_settings": "Configurações",
-
   "confirm_remove_device": "Tem certeza de que deseja remover este dispositivo?",
   "confirm_unlock_port_change": "Alterar a porta de desbloqueio removerá todos os dispositivos que usam UDP. Você terá que parear esses dispositivos novamente. Deseja continuar?",
   "error_incorrect_password": "Senha incorreta.",
@@ -164,7 +150,6 @@
   "accessibility_required_title": "Permissão de Acessibilidade",
   "accessibility_required": "Para inserir sua senha na tela de bloqueio e na janela de login, o PulseUnlock precisa da permissão de Acessibilidade.\n\nAbra os Ajustes do Sistema e ative \"PulseUnlock Agent\" em Privacidade e Segurança > Acessibilidade.",
   "skip_password_check": "Ignorar verificação de senha (não recomendado)",
-
   "pairing_form_password_desc": "Selecione um usuário e insira a respectiva senha. Seus dados de login são salvos criptografados no seu PC e não são compartilhados com ninguém.",
   "pairing_form_method_type_desc": "Selecione um tipo de comunicação.",
   "pairing_form_method_desc": "Selecione um método de comunicação.",
@@ -172,10 +157,8 @@
   "pairing_form_bt_select_desc": "Abra as configurações de Bluetooth no telefone e procure por dispositivos. Aguarde o telefone aparecer na lista e selecione-o.",
   "pairing_form_bt_pair_desc": "Conclua o pareamento Bluetooth no telefone e no sistema operacional.",
   "pairing_form_qr_desc": "Abra o aplicativo no telefone e escaneie o código QR para parear. Alternativamente, insira o código de pareamento no app.",
-  "pairing_method_type_cloud_select": "Automático (Nuvem)",
   "pairing_method_type_automatic_select": "Automático (Local)",
   "pairing_method_type_manual_select": "Manual",
-  "pairing_method_type_cloud_desc": "<b>Recomendado para a maioria dos casos.</b> Desbloqueie de qualquer lugar pela internet, não importa em qual rede você esteja. Consome muito pouca bateria. Requer uma assinatura da nuvem.",
   "pairing_method_type_automatic_desc": "Abre automaticamente uma solicitação de desbloqueio no seu telefone quando o PC a requisita.<br>Para a melhor experiência, talvez seja necessário <a href=\"https://dontkillmyapp.com/\">desativar as otimizações de bateria</a>.",
   "pairing_method_type_manual_desc": "Requer abrir o app manualmente e solicitar o desbloqueio por ele.",
   "pairing_use_legacy_select": "Usar pareamento antigo",
@@ -188,7 +171,6 @@
   "pairing_method_udp_desc": "Recomendado para PCs de mesa ou notebooks usados em casa. Funciona em qualquer rede local ou Wi-Fi, exceto hotspots móveis. Os dois dispositivos precisam estar na mesma rede.",
   "pairing_method_bt_desc": "Recomendado para notebooks ou tablets usados em movimento. Funciona sem nenhuma conexão de rede. Consome muita bateria. <b>Não recomendado para telefones Samsung ou versões do Android abaixo de 14.</b>",
   "pairing_method_manual_udp_desc": "Funciona em qualquer rede local ou Wi-Fi. Os dois dispositivos precisam estar na mesma rede.",
-
   "service_setting_wait_for_key": "Aguardar tecla pressionada no login",
   "service_setting_unlock_behavior": "Comportamento de desbloqueio",
   "unlock_behavior_foreground_lock_only": "Aguardar ao bloquear, imediato no login",
@@ -216,7 +198,6 @@
   "ssh_reboot_notice": "Pode ser necessário reiniciar o computador ou fazer login novamente para que a integração SSH funcione.",
   "error_ssh_encrypt": "Falha ao criptografar a senha SSH.",
   "error_ssh_wrong_device": "Um telefone diferente do selecionado respondeu. Tente novamente.",
-
   "error_file_write": "Erro ao escrever no arquivo '{}'.",
   "error_file_remove": "Erro ao remover o arquivo '{}'. Reinicie o PC e tente novamente.",
   "error_exec_setuid": "Erro ao definir permissão de execução e setuid para o arquivo '{}'.",
@@ -226,9 +207,5 @@
   "error_selinux_policy_uninstall": "Erro ao desinstalar política SELinux.",
   "error_registry_add": "Erro ao escrever no registro.",
   "error_registry_remove": "Erro ao remover entradas do registro.",
-  "error_unix_missing_dep": "Não foi possível encontrar '{}'. Instale usando seu gerenciador de pacotes.",
-  "error_cloud_unreachable": "Não foi possível acessar o servidor da nuvem. Verifique sua conexão com a internet.",
-  "error_cloud_pairing": "Falha no pareamento pela nuvem. Tente novamente.",
-  "error_cloud_connect": "Não foi possível conectar ao relay da nuvem.",
-  "error_cloud_pairing_expired": "O código de pareamento expirou antes de ser escaneado. Volte e comece novamente."
+  "error_unix_missing_dep": "Não foi possível encontrar '{}'. Instale usando seu gerenciador de pacotes."
 }

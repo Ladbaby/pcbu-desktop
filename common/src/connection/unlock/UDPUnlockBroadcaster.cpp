@@ -18,6 +18,8 @@ void UDPUnlockBroadcaster::AddDevice(const std::string &deviceID, uint16_t devic
 }
 
 void UDPUnlockBroadcaster::SendToTarget(const BroadcastTarget &target) {
+  if(!AppSettings::Get().udpDiscoveryEnabled)
+    return;
   for(const auto &device : m_Devices) {
     auto packet = PacketUDPBroadcast();
     packet.deviceId = device.deviceID;

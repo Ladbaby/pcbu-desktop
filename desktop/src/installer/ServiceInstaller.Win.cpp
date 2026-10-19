@@ -76,111 +76,24 @@ bool ServiceInstaller::IsInstalled() {
 }
 
 void ServiceInstaller::Install() {
-  m_Logger("Copying credential provider...");
-  auto nativeLib = ResourceHelper::GetResource(":/res/natives/{}", LIB_MODULE_FILE);
-  auto sysDir = ServiceInstaller_GetSysDir();
-  auto libPath = sysDir / LIB_MODULE_FILE;
-  auto result = Shell::WriteBytes(libPath, nativeLib);
-  if(!result)
-    throw std::runtime_error(I18n::Get("error_file_write", libPath.string()));
-
-  // Migration
-  auto oldLibPath = sysDir / LIB_MODULE_FILE_OLD;
-  if(std::filesystem::exists(oldLibPath)) {
-    result = Shell::Remove(oldLibPath);
-    if(!result)
-      throw std::runtime_error(I18n::Get("error_file_remove", oldLibPath.string()));
-  }
-
-  m_Logger("Creating registry entries...");
-  result =
-      Shell::RunCommand(
-          fmt::format(
-              R"(reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{0}" /t REG_SZ /d {1} /f)",
-              CRED_PROVIDER_GUID, CRED_PROVIDER_NAME))
-              .exitCode == 0 &&
-      Shell::RunCommand(fmt::format(R"(reg add "HKEY_CLASSES_ROOT\CLSID\{0}" /t REG_SZ /d {1} /f)", CRED_PROVIDER_GUID, CRED_PROVIDER_NAME))
-              .exitCode == 0 &&
-      Shell::RunCommand(
-          fmt::format(R"(reg add "HKEY_CLASSES_ROOT\CLSID\{0}\InprocServer32" /t REG_SZ /d {1} /f)", CRED_PROVIDER_GUID, CRED_PROVIDER_NAME))
-              .exitCode == 0 &&
-      Shell::RunCommand(
-          fmt::format(R"(reg add "HKEY_CLASSES_ROOT\CLSID\{0}\InprocServer32" /t REG_SZ /v ThreadingModel /d Apartment /f)", CRED_PROVIDER_GUID))
-              .exitCode == 0;
-  if(!result)
-    throw std::runtime_error(I18n::Get("error_registry_add"));
-
-  wchar_t wExePath[MAX_PATH]{};
-  if(GetModuleFileNameW(nullptr, wExePath, MAX_PATH) > 0 && std::filesystem::exists(wExePath)) {
-    auto exePath = StringUtils::FromWideString(wExePath);
-    m_Logger("Removing old firewall rules for PulseUnlock...");
-    WinFirewallHelper::RemoveAllRulesForProgram(exePath);
-
-    // Migration
-    auto programFilesDir = PlatformHelper::GetProgramFilesDir();
-    if(!programFilesDir.empty()) {
-      auto oldInstallExe = programFilesDir / "PCBioUnlock" / "pcbu_desktop.exe";
-      if(std::filesystem::exists(oldInstallExe) && oldInstallExe != std::filesystem::path(wExePath))
-        WinFirewallHelper::RemoveAllRulesForProgram(oldInstallExe.string());
-    }
-
-    m_Logger("Adding Windows firewall rule for PulseUnlock...");
-    result = Shell::RunCommand(fmt::format(R"(netsh advfirewall firewall add rule name="{0}" dir=in program="{1}" profile=any action=allow)",
-                                           APP_FIREWALL_RULE_NAME, exePath))
-                 .exitCode == 0;
-    if(!result)
-      m_Logger(I18n::Get("error_firewall_rule_add", "Windows Firewall (PulseUnlock)"));
-  } else {
-    m_Logger("Warning: App path not found. Skipped adding firewall rule.");
-  }
-
-  auto logonUiPath = ServiceInstaller_GetSysDir() / "LogonUI.exe";
-  m_Logger("Removing old firewall rules for LogonUI...");
-  WinFirewallHelper::RemoveAllRulesForProgram(logonUiPath.string());
-  m_Logger("Adding Windows firewall rule for LogonUI...");
-  result = Shell::RunCommand(fmt::format(R"(netsh advfirewall firewall add rule name="{0}" dir=in program="{1}" profile=any action=allow)",
-                                         LOGONUI_FIREWALL_RULE_NAME, logonUiPath.string()))
-               .exitCode == 0;
-  if(!result)
-    m_Logger(I18n::Get("error_firewall_rule_add", "Windows Firewall (LogonUI)"));
+  m_Logger("Installing embedded credential provider...");
+  if(!Shell::WindowsOperation(ElevatorCommandType::INSTALL_PROVIDER))
+    throw std::runtime_error("Cannot install credential provider.");
+  if(!Shell::WindowsOperation(ElevatorCommandType::CONFIGURE_FIREWALL))
+    throw std::runtime_error("Cannot configure local-only firewall rules.");
 
   m_Logger("Setting default credential provider...");
   for(auto device : PairedDevicesStorage::GetDevices()) {
     if(!PlatformHelper::SetDefaultCredProv(device.userName, CRED_PROVIDER_GUID))
       m_Logger(fmt::format("Failed setting default credential provider for user '{}'.", device.userName));
   }
-  m_Logger("Done.");
+  m_Logger("Provider and firewall stages completed; settings still need to be saved.");
 }
 
 void ServiceInstaller::Uninstall(bool /*fullUninstall*/) {
-  m_Logger("Removing credential provider...");
-  auto sysDir = ServiceInstaller_GetSysDir();
-  auto result = true;
-  for(const auto &moduleFile : {LIB_MODULE_FILE, LIB_MODULE_FILE_OLD}) {
-    auto libPath = sysDir / moduleFile;
-    if(!std::filesystem::exists(libPath))
-      continue;
-    result = Shell::Remove(libPath);
-    if(!result)
-      throw std::runtime_error(I18n::Get("error_file_remove", libPath.string()));
-  }
-
-  m_Logger("Removing registry entries...");
-  result = Shell::RunCommand(
-               fmt::format(R"(reg delete "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{0}" /f)",
-                           CRED_PROVIDER_GUID))
-                   .exitCode == 0 &&
-           Shell::RunCommand(fmt::format(R"(reg delete "HKEY_CLASSES_ROOT\CLSID\{0}" /f)", CRED_PROVIDER_GUID)).exitCode == 0;
-  if(!result)
-    throw std::runtime_error(I18n::Get("error_registry_remove"));
-
-  m_Logger("Removing Windows firewall rules...");
-  for(const auto &ruleName : {APP_FIREWALL_RULE_NAME, APP_FIREWALL_RULE_NAME_OLD, LOGONUI_FIREWALL_RULE_NAME, LOGONUI_FIREWALL_RULE_NAME_OLD}) {
-    if(Shell::RunCommand(fmt::format(R"(netsh advfirewall firewall show rule name="{0}")", ruleName)).exitCode != 0)
-      continue;
-    result = Shell::RunCommand(fmt::format(R"(netsh advfirewall firewall delete rule name="{0}")", ruleName)).exitCode == 0;
-    if(!result)
-      m_Logger(I18n::Get("error_firewall_rule_remove", fmt::format("Windows Firewall ({})", ruleName)));
-  }
-  m_Logger("Done.");
+  if(!Shell::WindowsOperation(ElevatorCommandType::REMOVE_PROVIDER))
+    throw std::runtime_error("Cannot remove credential provider.");
+  if(!Shell::WindowsOperation(ElevatorCommandType::REMOVE_FIREWALL))
+    throw std::runtime_error("Cannot remove owned firewall rules.");
+  m_Logger("Provider and firewall stages completed; settings still need to be saved.");
 }

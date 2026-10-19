@@ -34,7 +34,6 @@ void PairingServer::ReportError(const std::string &message) {
 }
 
 void PairingServer::HandleClient(ConnectionStream &stream) {
-  auto isCloud = m_UIData.method == PairingMethod::CLOUD;
   auto packetRes = ReadEncryptedPacket(stream);
   if(packetRes.data.empty()) {
     if(packetRes.result == PacketCryptResult::INVALID_TIMESTAMP) {
@@ -51,8 +50,6 @@ void PairingServer::HandleClient(ConnectionStream &stream) {
         return;
       }
     }
-    if(isCloud)
-      ReportError(I18n::Get("error_cloud_pairing"));
     return;
   }
   try {
@@ -84,7 +81,6 @@ void PairingServer::HandleClient(ConnectionStream &stream) {
     device.udpPort = initPacket->udpPort;
     device.udpManualPort = initPacket->udpManualPort;
     device.bluetoothAddress = m_UIData.btAddress;
-    device.cloudToken = initPacket->cloudToken;
 
     auto respPacket = PacketPairResponse();
     respPacket.data = PacketPairResponseData();
@@ -99,7 +95,8 @@ void PairingServer::HandleClient(ConnectionStream &stream) {
     respPacket.data.passwordKey = passwordKey;
 
     if(WriteEncryptedPacket(stream, PACKET_ID_PAIR_RESPONSE, respPacket.ToJson().dump())) {
-      PairedDevicesStorage::AddDevice(device);
+      if(!PairedDevicesStorage::AddDevice(device))
+        throw std::runtime_error("Cannot persist paired device.");
       spdlog::info("Successfully paired device. (ID={}, Method={})", device.id, PairingMethodUtils::ToString(device.pairingMethod));
 #ifdef WINDOWS
       if(PlatformHelper::SetDefaultCredProv(m_UIData.userName, "{74A23DE2-B81D-46EC-E129-CD32507ED716}"))

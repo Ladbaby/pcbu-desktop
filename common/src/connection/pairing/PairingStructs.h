@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <nlohmann/json.hpp>
+#include <openssl/crypto.h>
 
 #include "storage/PairingMethod.h"
 
@@ -43,6 +44,10 @@ struct LegacyPairingQRData {
 };
 
 struct PairingUIData {
+  ~PairingUIData() {
+    if(!password.empty()) OPENSSL_cleanse(password.data(), password.size());
+    if(!encKey.empty()) OPENSSL_cleanse(encKey.data(), encKey.size());
+  }
   std::string userName{};
   std::string password{};
   std::string encKey{};

@@ -52,7 +52,7 @@ void SettingsForm::SetServiceSettings(const QVariantList &settings) {
 }
 
 bool SettingsForm::IsDebugLoggingEnabled() {
-  return std::filesystem::exists(AppSettings::GetBaseDir() / "LOG_DEBUG");
+  return Shell::Exists(AppSettings::GetBaseDir() / "LOG_DEBUG");
 }
 
 void SettingsForm::SetDebugLoggingEnabled(bool enabled) {
@@ -90,7 +90,12 @@ void SettingsForm::Show(QObject *viewLoader) {
 }
 
 void SettingsForm::OnSaveSettingsClicked(QObject *viewLoader, QObject *window) {
-  AppSettings::Save(m_EditSettings.ToStorage());
+  try {
+    AppSettings::Save(m_EditSettings.ToStorage());
+  } catch(...) {
+    QMetaObject::invokeMethod(window, "showErrorMessage", Q_ARG(QVariant, QStringLiteral("Cannot save protected settings. Previous settings were preserved.")));
+    return;
+  }
   if(m_SaveThread.joinable())
     m_SaveThread.join();
   QMetaObject::invokeMethod(window, "showLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("please_wait"))));
@@ -102,6 +107,10 @@ void SettingsForm::OnSaveSettingsClicked(QObject *viewLoader, QObject *window) {
     try {
       auto installer = ServiceInstaller(logCallback);
       installer.ApplySettings(serviceSettings, false);
+#ifdef WINDOWS
+      if(ServiceInstaller::IsInstalled() && !Shell::WindowsOperation(ElevatorCommandType::CONFIGURE_FIREWALL))
+        throw std::runtime_error("Cannot apply local-only firewall settings.");
+#endif
     } catch(const std::exception &ex) {
       logCallback(ex.what());
       QMetaObject::invokeMethod(window, "finishLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("error"))));

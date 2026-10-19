@@ -67,8 +67,7 @@ void MainWindow::PerformStartupChecks(QObject *window) {
     };
 
     Shell::Init();
-    auto testCmdResult = Shell::RunCommand("echo");
-    if(!Shell::HasAdmin() || testCmdResult.exitCode != 0) {
+    if(!Shell::HasAdmin()) {
 #ifdef WINDOWS
       auto errorKey = "error_not_admin";
 #elif LINUX
@@ -121,8 +120,16 @@ void MainWindow::PerformStartupChecks(QObject *window) {
     });
     AppSettings::InvalidateCache();
     PairedDevicesStorage::InvalidateCache();
-    PairedDevicesStorage::GetDevices();
+    try {
+      PairedDevicesStorage::GetDevices();
+    } catch(...) {
+      QMetaObject::invokeMethod(window, "showFatalErrorMessage", Q_ARG(QVariant, QStringLiteral("Cannot load protected credentials. Original records were preserved.")));
+      finish(false, false);
+      return;
+    }
     auto settings = AppSettings::Get();
+    if(PairedDevicesStorage::ConsumeRemovedCloudCount() > 0)
+      QMetaObject::invokeMethod(window, "showInfoMessage", Q_ARG(QVariant, QStringLiteral("Legacy cloud pairings were removed. Pair those phones again using a local connection.")));
 
     const auto installedVersion = settings.installedVersion;
     auto needsReinstall =
@@ -165,16 +172,21 @@ void MainWindow::OnInstallClicked(QObject *window) {
 
     auto installer = ServiceInstaller(logCallback);
     try {
-      if(ServiceInstaller::IsInstalled()) {
+      // DLL presence is not completion: a failed final settings save must remain retryable.
+      const bool completed = ServiceInstaller::IsInstalled() && !AppSettings::Get().installedVersion.empty();
+      if(completed) {
         installer.Uninstall(true);
+        AppSettings::SetInstalledVersion(false);
       } else {
         installer.Install();
         installer.ApplySettings(installer.GetSettings(), true);
+        logCallback("Saving installation settings...");
+        AppSettings::SetInstalledVersion(true);
       }
-      AppSettings::SetInstalledVersion(ServiceInstaller::IsInstalled());
       QMetaObject::invokeMethod(window, "finishLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("success"))));
     } catch(const std::exception &ex) {
       logCallback(ex.what());
+      logCallback("Installation may be partial. Completed provider/firewall changes were not rolled back.");
       QMetaObject::invokeMethod(window, "finishLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("error"))));
     }
   });
@@ -191,8 +203,7 @@ void MainWindow::OnReinstallClicked(QObject *window) {
     };
     auto installer = ServiceInstaller(logCallback);
     try {
-      if(ServiceInstaller::IsInstalled())
-        installer.Uninstall(false);
+      // Repair in place; do not uninstall a working provider before retrying persistence.
       installer.Install();
       installer.ApplySettings(installer.GetSettings(), false);
 
@@ -218,6 +229,7 @@ void MainWindow::OnReinstallClicked(QObject *window) {
       QMetaObject::invokeMethod(window, "finishLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("success"))));
     } catch(const std::exception &ex) {
       logCallback(ex.what());
+      logCallback("Installation may be partial. Completed provider/firewall changes were not rolled back.");
       QMetaObject::invokeMethod(window, "finishLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("error"))));
     }
   });

@@ -11,9 +11,21 @@ Form {
         anchors.fill: parent
         spacing: 10
 
-        RowLayout {
+        ScrollView {
+            id: settingsScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            clip: true
+            contentWidth: availableWidth
+            contentHeight: settingsContent.implicitHeight
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+        RowLayout {
+            id: settingsContent
+            width: settingsScroll.availableWidth
+            height: implicitHeight
             spacing: 12
 
             // Common settings
@@ -93,6 +105,27 @@ Form {
                                 }
                             }
 
+                            CheckBox {
+                                id: automaticUpdates
+                                text: "Automatically check GitHub releases"
+                                checked: SettingsForm.GetSettings().automaticUpdateChecks
+                                ToolTip.text: "Off by default. GitHub receives normal connection metadata when checks run."
+                                ToolTip.visible: hovered
+                            }
+                            Button {
+                                text: "Check for updates now"
+                                onClicked: UpdaterWindow.CheckForUpdates(window, true)
+                            }
+                            CheckBox {
+                                id: udpConsent
+                                text: "Enable UDP discovery"
+                                checked: SettingsForm.GetSettings().udpDiscoveryEnabled
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                text: "UDP discovery broadcasts device identifiers, IP addresses and ports to your local network. Existing UDP pairings remain inactive until you enable this and save."
+                            }
                             // Debug logging
                             CheckBox {
                                 id: debugLogCheckBox
@@ -434,8 +467,10 @@ Form {
                 Layout.fillWidth: true
             }
         }
+        }
 
         StepButtons {
+            objectName: "settingsActions"
             Layout.fillWidth: true
             nextTitle: QI18n.Get('save')
             onBackClicked: MainWindow.Show(viewLoader)
@@ -478,6 +513,8 @@ Form {
 
                 let doSave = function () {
                     let settings = SettingsForm.GetSettings();
+                    settings.automaticUpdateChecks = automaticUpdates.checked;
+                    settings.udpDiscoveryEnabled = udpConsent.checked;
                     settings.serverIP = serverIp;
                     settings.serverMAC = serverIp === 'auto' ? networkListModel.get(ipSelectComboBox.currentIndex).macAddress : '';
                     settings.pairingDiscoveryPort = pairingDiscoveryPortNum;

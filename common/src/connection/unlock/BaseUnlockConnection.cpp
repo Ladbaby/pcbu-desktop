@@ -171,7 +171,7 @@ bool BaseUnlockConnection::OnResponseReceived(ConnectionStream &stream, const Pa
   // Error handling
   auto error = responsePacket.value().error;
   if(!error.empty()) {
-    spdlog::error("Error in response packet: {}", error);
+    spdlog::error("Error in response packet (code={}).", error == "CANCEL" ? "CANCEL" : error == "NOT_PAIRED" ? "NOT_PAIRED" : error == "APP_ERROR" ? "APP_ERROR" : error == "TIME_ERROR" ? "TIME_ERROR" : error == "DATA_ERROR" ? "DATA_ERROR" : error == "PROTOCOL_ERROR" ? "PROTOCOL_ERROR" : "UNKNOWN");
     if(error == "CANCEL") {
       m_UnlockState = UnlockState::CANCELED;
     } else if(error == "NOT_PAIRED") {
@@ -258,7 +258,7 @@ UnlockState BaseUnlockConnection::MapPacketError(PacketError error, UnlockState 
     case PacketError::UNSUPPORTED_VERSION:
       return UnlockState::PROTOCOL_ERROR;
     case PacketError::PEER_UNAVAILABLE:
-      return UnlockState::CLOUD_PHONE_UNREACHABLE;
+      return UnlockState::CONNECT_ERROR;
     default:
       return fallback;
   }

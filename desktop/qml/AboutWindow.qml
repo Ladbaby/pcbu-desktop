@@ -24,7 +24,7 @@ ApplicationWindow {
             text: QI18n.Get('by_meis_apps')
         }
         Label {
-            text: "<a href=\"https://meis-apps.com\">https://meis-apps.com</a>"
+            text: "<a href=\"https://github.com/Ladbaby/pcbu-desktop\">Fork source code</a>"
             onLinkActivated: function(link) { Qt.openUrlExternally(link); }
         }
         Label {

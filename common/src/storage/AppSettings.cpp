@@ -18,9 +18,9 @@ std::mutex AppSettings::g_Mutex{};
 std::filesystem::path AppSettings::GetBaseDir() {
   auto newDir = GetNewBaseDir();
   auto oldDir = GetOldBaseDir();
-  if(std::filesystem::exists(newDir / SETTINGS_FILE_NAME))
+  if(Shell::Exists(newDir / SETTINGS_FILE_NAME))
     return newDir;
-  if(std::filesystem::exists(oldDir / SETTINGS_FILE_NAME))
+  if(Shell::Exists(oldDir / SETTINGS_FILE_NAME))
     return oldDir;
   return newDir;
 }
@@ -56,13 +56,13 @@ PCBUAppStorage AppSettings::Get() {
 PCBUAppStorage AppSettings::Load() {
   auto defaults = LoadDefaults();
   auto settingsPath = GetBaseDir() / SETTINGS_FILE_NAME;
-  if(!std::filesystem::exists(settingsPath)) {
+  if(!Shell::Exists(settingsPath)) {
     Write(defaults);
     return defaults;
   }
   auto jsonData = Shell::ReadBytes(settingsPath);
   if(jsonData.empty())
-    return defaults;
+    throw std::runtime_error("Settings are unreadable; refusing to replace them.");
 
   try {
     auto json = nlohmann::json::parse(jsonData);
@@ -72,9 +72,17 @@ PCBUAppStorage AppSettings::Load() {
     settings.language = json.value("language", defaults.language);
     settings.serverIP = json.value("serverIP", defaults.serverIP);
     settings.serverMAC = json.value("serverMAC", defaults.serverMAC);
-    settings.pairingDiscoveryPort = json.value("pairingDiscoveryPort", defaults.pairingDiscoveryPort);
-    settings.pairingServerPort = json.value("pairingServerPort", defaults.pairingServerPort);
-    settings.unlockServerPort = json.value("unlockServerPort", defaults.unlockServerPort);
+    const auto port = [&](const char *name, uint16_t fallback) {
+      if(!json.contains(name)) return fallback;
+      const auto &value = json.at(name);
+      if(!value.is_number_integer()) throw std::runtime_error("Invalid port.");
+      const auto number = value.get<int64_t>();
+      if(number < 1 || number > 65535) throw std::runtime_error("Invalid port.");
+      return static_cast<uint16_t>(number);
+    };
+    settings.pairingDiscoveryPort = port("pairingDiscoveryPort", defaults.pairingDiscoveryPort);
+    settings.pairingServerPort = port("pairingServerPort", defaults.pairingServerPort);
+    settings.unlockServerPort = port("unlockServerPort", defaults.unlockServerPort);
     settings.clientSocketTimeout = json.value("clientSocketTimeout", defaults.clientSocketTimeout);
     settings.clientConnectTimeout = json.value("clientConnectTimeout", defaults.clientConnectTimeout);
     settings.clientConnectRetries = json.value("clientConnectRetries", defaults.clientConnectRetries);
@@ -88,12 +96,13 @@ PCBUAppStorage AppSettings::Load() {
     settings.unixSetPasswordPAM = json.value("unixSetPasswordPAM", defaults.unixSetPasswordPAM);
 #endif
     settings.macLoginScreen = json.value("macLoginScreen", defaults.macLoginScreen);
+    settings.automaticUpdateChecks = json.value("automaticUpdateChecks", false);
+    settings.udpDiscoveryEnabled = json.value("udpDiscoveryEnabled", false);
     if(!json.contains("machineID"))
       Write(settings);
     return settings;
   } catch(const std::exception &ex) {
-    spdlog::error("Failed reading app storage: {}", ex.what());
-    return LoadDefaults();
+    throw std::runtime_error("Cannot parse application settings; original file preserved.");
   }
 }
 
@@ -118,6 +127,8 @@ PCBUAppStorage AppSettings::LoadDefaults() {
   def.unixSetPasswordPAM = false;
 #endif
   def.macLoginScreen = true;
+  def.automaticUpdateChecks = false;
+  def.udpDiscoveryEnabled = false;
   return def;
 }
 
@@ -147,14 +158,21 @@ void AppSettings::Write(const PCBUAppStorage &storage) {
         {"winForceDefaultCredProv", storage.winForceDefaultCredProv},
         {"unixSetPasswordPAM", storage.unixSetPasswordPAM},
         {"macLoginScreen", storage.macLoginScreen},
+        {"automaticUpdateChecks", storage.automaticUpdateChecks},
+        {"udpDiscoveryEnabled", storage.udpDiscoveryEnabled},
     };
     auto baseDir = GetBaseDir();
-    if(!std::filesystem::exists(baseDir))
-      Shell::CreateDir(baseDir);
+    if(!Shell::CreateDir(baseDir))
+      throw std::runtime_error("Cannot create settings directory.");
     auto jsonStr = json.dump();
-    Shell::WriteBytes(baseDir / SETTINGS_FILE_NAME, {jsonStr.begin(), jsonStr.end()});
+    if(!Shell::WriteBytesAtomic(baseDir / SETTINGS_FILE_NAME, {jsonStr.begin(), jsonStr.end()}))
+      throw std::runtime_error("Cannot persist settings.");
   } catch(const std::exception &ex) {
-    spdlog::error("Failed writing app storage: {}", ex.what());
+    const std::string detail = ex.what();
+    // Only forward our bounded stage diagnostics, never parser input or arbitrary exceptions.
+    const auto safe = detail.starts_with("Stage=") && detail.size() < 160 ? detail : "Stage=settings.save, Code=31";
+    spdlog::error("Failed writing app storage: {}", safe);
+    throw std::runtime_error(std::string("Cannot persist application settings. ") + safe);
   }
 }
 
@@ -198,9 +216,9 @@ std::filesystem::path AppSettings::GetOldBaseDir() {
 bool AppSettings::NeedsMigration() {
   auto newDir = GetNewBaseDir();
   auto oldDir = GetOldBaseDir();
-  if(std::filesystem::exists(newDir / SETTINGS_FILE_NAME))
+  if(Shell::Exists(newDir / SETTINGS_FILE_NAME))
     return false;
-  if(!std::filesystem::exists(oldDir / SETTINGS_FILE_NAME))
+  if(!Shell::Exists(oldDir / SETTINGS_FILE_NAME))
     return false;
   return true;
 }
@@ -209,17 +227,22 @@ void AppSettings::MigrateBaseDir() {
   if(!NeedsMigration())
     return;
 
+#ifdef WINDOWS
+  if(!Shell::WindowsOperation(ElevatorCommandType::MIGRATE_STORAGE))
+    throw std::runtime_error("Cannot secure legacy storage.");
+  return;
+#endif
   auto newDir = GetNewBaseDir();
   auto oldDir = GetOldBaseDir();
   auto oldDevicesFile = oldDir / "paired_devices.json";
   auto newDevicesFile = newDir / "paired_devices.json";
-  if(std::filesystem::exists(newDir)) {
+  if(Shell::Exists(newDir)) {
     auto logsDir = GetLogsDir(false);
     std::vector<std::filesystem::path> entries{};
     for(const auto &entry : std::filesystem::directory_iterator(newDir))
       entries.push_back(entry.path());
     for(const auto &entry : entries) {
-      if(entry != logsDir || std::filesystem::exists(oldDir / entry.filename()))
+      if(entry != logsDir || Shell::Exists(oldDir / entry.filename()))
         throw std::runtime_error(fmt::format("Migration target '{}' already exists.", entry.string()));
     }
     for(const auto &entry : entries)
@@ -227,14 +250,15 @@ void AppSettings::MigrateBaseDir() {
     if(!Shell::Remove(newDir))
       throw std::runtime_error(fmt::format("Failed removing empty migration target '{}'.", newDir.string()));
   }
-  Shell::ProtectFile(oldDevicesFile, false);
+  if(Shell::Exists(oldDevicesFile) && !Shell::ProtectFile(oldDevicesFile, true))
+    throw std::runtime_error("Cannot secure legacy credentials.");
   try {
     MovePath(oldDir, newDir);
   } catch(...) {
     Shell::ProtectFile(oldDevicesFile, true);
     throw;
   }
-  if(std::filesystem::exists(newDevicesFile) && !Shell::ProtectFile(newDevicesFile, true))
+  if(Shell::Exists(newDevicesFile) && !Shell::ProtectFile(newDevicesFile, true))
     spdlog::warn("Failed setting permissions of '{}'.", newDevicesFile.string());
 }
 

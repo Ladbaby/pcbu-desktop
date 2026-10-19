@@ -25,6 +25,8 @@ struct PCBUAppStorage {
   bool winForceDefaultCredProv{};
   bool unixSetPasswordPAM{};
   bool macLoginScreen{};
+  bool automaticUpdateChecks{false};
+  bool udpDiscoveryEnabled{false};
 };
 
 class AppSettings {

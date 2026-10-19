@@ -1,9 +1,10 @@
 #include "PairedDevicesStorage.h"
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <stdexcept>
-#include <vector>
+#include <utility>
 
 #include "AppSettings.h"
 #include "shell/Shell.h"
@@ -11,6 +12,35 @@
 
 std::vector<PairedDevice> PairedDevicesStorage::g_Cache{};
 std::mutex PairedDevicesStorage::g_Mutex{};
+bool PairedDevicesStorage::g_Loaded = false;
+size_t PairedDevicesStorage::g_RemovedCloudCount = 0;
+
+namespace {
+nlohmann::json SerializeDevices(const std::vector<PairedDevice> &devices) {
+  auto result = nlohmann::json::array();
+  for(const auto &device : devices) {
+    auto servers = nlohmann::json::array();
+    for(const auto &server : device.sshServers)
+      servers.push_back({{"host", server.host}, {"user", server.user}, {"keyPath", server.keyPath}, {"passwordEnc", server.passwordEnc}});
+    result.push_back({{"id", device.id}, {"pairingMethod", PairingMethodUtils::ToString(device.pairingMethod)},
+                     {"deviceName", device.deviceName}, {"userName", device.userName}, {"passwordEnc", device.passwordEnc},
+                     {"encryptionKey", device.encryptionKey}, {"ipAddress", device.ipAddress}, {"tcpPort", device.tcpPort},
+                     {"udpPort", device.udpPort}, {"udpManualPort", device.udpManualPort},
+                     {"bluetoothAddress", device.bluetoothAddress}, {"sshServers", servers}});
+  }
+  return result;
+}
+void EnsureStorageDirectory(const std::filesystem::path &directory) {
+#ifdef WINDOWS
+  if(!Shell::CreateDir(directory))
+#else
+  if(!std::filesystem::exists(directory) && !Shell::CreateDir(directory))
+#endif
+    throw std::runtime_error("Cannot create paired-device storage directory.");
+  if(!Shell::ProtectFile(directory, true))
+    throw std::runtime_error("Cannot secure paired-device storage directory.");
+}
+}
 
 std::optional<PairedDevice> PairedDevicesStorage::GetDeviceByID(const std::string &id) {
   for(const auto &device : GetDevices())
@@ -22,160 +52,152 @@ std::optional<PairedDevice> PairedDevicesStorage::GetDeviceByID(const std::strin
 std::vector<PairedDevice> PairedDevicesStorage::GetDevicesForUser(const std::string &userName) {
   std::vector<PairedDevice> result{};
 #ifdef WINDOWS
-  auto userNameLower = StringUtils::ToLower(userName);
-  std::string principalName{};
-  auto userSplit = StringUtils::Split(userName, "\\");
+  const auto userNameLower = StringUtils::ToLower(userName);
+  std::string principalName;
+  const auto userSplit = StringUtils::Split(userName, "\\");
   if(userSplit.size() == 2 && userSplit[1].find('@') != std::string::npos)
     principalName = StringUtils::ToLower(userSplit[1]);
 #endif
   for(const auto &device : GetDevices()) {
 #ifdef WINDOWS
-    auto deviceUserName = StringUtils::ToLower(device.userName);
+    const auto deviceUserName = StringUtils::ToLower(device.userName);
     if(deviceUserName == userNameLower || (!principalName.empty() && deviceUserName == principalName))
-      result.emplace_back(device);
 #else
     if(device.userName == userName)
-      result.emplace_back(device);
 #endif
+      result.emplace_back(device);
   }
   return result;
 }
 
-void PairedDevicesStorage::AddDevice(const PairedDevice &device) {
-  auto devices = PairedDevicesStorage::GetDevices();
-  auto rmRange = std::ranges::remove_if(devices, [&](const PairedDevice &d) { return d.id == device.id; });
-  devices.erase(rmRange.begin(), rmRange.end());
+bool PairedDevicesStorage::AddDevice(const PairedDevice &device) {
+  auto devices = GetDevices();
+  std::erase_if(devices, [&](const PairedDevice &d) { return d.id == device.id; });
   devices.emplace_back(device);
-  PairedDevicesStorage::SaveDevices(devices);
+  return SaveDevices(devices);
 }
 
 void PairedDevicesStorage::RemoveDevice(const std::string &id) {
-  auto devices = PairedDevicesStorage::GetDevices();
-  auto rmRange = std::ranges::remove_if(devices, [&](const PairedDevice &d) { return d.id == id; });
-  devices.erase(rmRange.begin(), rmRange.end());
-  PairedDevicesStorage::SaveDevices(devices);
+  auto devices = GetDevices();
+  std::erase_if(devices, [&](const PairedDevice &d) { return d.id == id; });
+  if(!SaveDevices(devices))
+    throw std::runtime_error("Cannot persist paired-device removal.");
 }
 
 std::vector<PairedDevice> PairedDevicesStorage::GetDevices() {
   std::unique_lock lock(g_Mutex);
-  if(!g_Cache.empty())
-    return g_Cache;
-  g_Cache = Load();
+  if(!g_Loaded) {
+    g_Cache = Load();
+    g_Loaded = true;
+  }
   return g_Cache;
 }
 
 std::vector<PairedDevice> PairedDevicesStorage::Load() {
-  auto filePath = AppSettings::GetBaseDir() / DEVICES_FILE_NAME;
-#ifdef WINDOWS
-  Shell::ProtectFile(filePath, false);
-#endif
-  auto jsonData = Shell::ReadBytes(filePath);
-#ifdef WINDOWS
-  Shell::ProtectFile(filePath, true);
-#endif
-
-  std::vector<PairedDevice> result{};
-  if(jsonData.empty())
-    return result;
-
+  const auto directory = AppSettings::GetBaseDir();
+  EnsureStorageDirectory(directory);
+  const auto path = directory / DEVICES_FILE_NAME;
+  const bool exists = Shell::Exists(path);
+  if(!exists)
+    return {};
+  if(!Shell::ProtectFile(path, true))
+    throw std::runtime_error("Cannot secure paired-device storage.");
+  auto bytes = Shell::ReadBytes(path);
+  if(bytes.empty())
+    throw std::runtime_error("Paired-device storage is empty or unreadable; refusing to replace it.");
   try {
-    auto json = nlohmann::json::parse(jsonData);
-    for(auto entry : json) {
-      try {
-        auto device = PairedDevice();
-        device.id = entry["id"];
-        device.pairingMethod = PairingMethodUtils::FromString(entry["pairingMethod"]);
-        device.deviceName = entry["deviceName"];
-        device.userName = entry["userName"];
-        device.passwordEnc = entry["passwordEnc"];
-        device.encryptionKey = entry["encryptionKey"];
-
-        device.ipAddress = entry["ipAddress"];
-        device.bluetoothAddress = entry["bluetoothAddress"];
-        device.cloudToken = entry["cloudToken"];
-        device.tcpPort = entry["tcpPort"];
-        device.udpPort = entry["udpPort"];
-        device.udpManualPort = entry["udpManualPort"];
-
-        if(entry.contains("sshServers") && entry["sshServers"].is_array()) {
-          for(const auto &sshEntry : entry["sshServers"]) {
-            if(!sshEntry.is_object())
-              continue;
-            auto server = SshServer();
-            server.host = sshEntry.value("host", "");
-            server.user = sshEntry.value("user", "");
-            server.keyPath = sshEntry.value("keyPath", "");
-            server.passwordEnc = sshEntry.value("passwordEnc", "");
-            if(server.host.empty() && server.keyPath.empty())
-              continue;
-            device.sshServers.emplace_back(server);
-          }
-        }
-        result.emplace_back(device);
-      } catch(const std::exception &ex) {
-        spdlog::error("Skipped invalid paired device.");
+    auto json = nlohmann::json::parse(bytes);
+    // Historical empty storage was written as null.
+    if(json.is_null())
+      json = nlohmann::json::array();
+    if(!json.is_array())
+      throw std::runtime_error("Invalid storage root.");
+    std::vector<PairedDevice> devices;
+    size_t removed = 0;
+    bool needsMigration = false;
+    for(const auto &entry : json) {
+      if(entry.at("pairingMethod").get<std::string>() == "CLOUD") {
+        ++removed;
+        needsMigration = true;
+        continue;
       }
+      needsMigration = needsMigration || entry.contains("cloudToken");
+      PairedDevice device;
+      device.id = entry.at("id");
+      device.pairingMethod = PairingMethodUtils::FromString(entry.at("pairingMethod"));
+      device.deviceName = entry.at("deviceName");
+      device.userName = entry.at("userName");
+      device.passwordEnc = entry.at("passwordEnc");
+      device.encryptionKey = entry.at("encryptionKey");
+      device.ipAddress = entry.at("ipAddress");
+      device.bluetoothAddress = entry.at("bluetoothAddress");
+      const auto checkedPort = [&](const char *name) {
+        const auto &value = entry.at(name);
+        if(!value.is_number_integer())
+          throw std::runtime_error("Invalid stored port.");
+        const auto port = value.get<int64_t>();
+        if(port < 0 || port > 65535)
+          throw std::runtime_error("Invalid stored port.");
+        return static_cast<uint16_t>(port);
+      };
+      device.tcpPort = checkedPort("tcpPort");
+      device.udpPort = checkedPort("udpPort");
+      device.udpManualPort = checkedPort("udpManualPort");
+      if(entry.contains("sshServers")) {
+        if(!entry.at("sshServers").is_array())
+          throw std::runtime_error("Invalid stored SSH server list.");
+        for(const auto &serverEntry : entry.at("sshServers")) {
+          SshServer server;
+          server.host = serverEntry.value("host", "");
+          server.user = serverEntry.value("user", "");
+          server.keyPath = serverEntry.value("keyPath", "");
+          server.passwordEnc = serverEntry.value("passwordEnc", "");
+          device.sshServers.emplace_back(std::move(server));
+        }
+      }
+      devices.emplace_back(std::move(device));
     }
-  } catch(const std::exception &ex) {
-    spdlog::error("Failed reading paired devices storage: {}", ex.what());
+    if(needsMigration) {
+      const auto data = SerializeDevices(devices).dump();
+      if(!Shell::WriteBytesAtomic(path, {data.begin(), data.end()}))
+        throw std::runtime_error("Cannot migrate paired-device storage.");
+      g_RemovedCloudCount += removed;
+    }
+    return devices;
+  } catch(...) {
+    // Do not disclose parser input, and do not turn a failed load into valid-empty storage.
+    throw std::runtime_error("Cannot load or migrate paired-device storage; original records have not been replaced.");
   }
-  return result;
 }
 
-void PairedDevicesStorage::SaveDevices(const std::vector<PairedDevice> &devices) {
+bool PairedDevicesStorage::SaveDevices(const std::vector<PairedDevice> &devices) {
   std::unique_lock lock(g_Mutex);
   try {
-    nlohmann::json devicesJson{};
-    for(auto device : devices) {
-      auto sshServersJson = nlohmann::json::array();
-      for(const auto &server : device.sshServers)
-        sshServersJson.push_back({{"host", server.host}, {"user", server.user}, {"keyPath", server.keyPath}, {"passwordEnc", server.passwordEnc}});
-
-      nlohmann::json deviceJson = {
-          {"id", device.id},
-          {"pairingMethod", PairingMethodUtils::ToString(device.pairingMethod)},
-          {"deviceName", device.deviceName},
-          {"userName", device.userName},
-          {"passwordEnc", device.passwordEnc},
-          {"encryptionKey", device.encryptionKey},
-
-          {"ipAddress", device.ipAddress},
-          {"tcpPort", device.tcpPort},
-          {"udpPort", device.udpPort},
-          {"udpManualPort", device.udpManualPort},
-          {"bluetoothAddress", device.bluetoothAddress},
-          {"cloudToken", device.cloudToken},
-
-          {"sshServers", sshServersJson},
-      };
-      devicesJson.emplace_back(deviceJson);
+    // Never allow a failed initial load to be silently overwritten.
+    if(!g_Loaded) {
+      g_Cache = Load();
+      g_Loaded = true;
     }
-    auto baseDir = AppSettings::GetBaseDir();
-    if(!std::filesystem::exists(baseDir))
-      Shell::CreateDir(baseDir);
-    auto filePath = baseDir / DEVICES_FILE_NAME;
-    if(!std::filesystem::exists(filePath)) {
-      if(!Shell::CreateFile(filePath))
-        throw std::runtime_error(fmt::format("Error creating '{}'.", filePath.string()));
-      if(!Shell::ProtectFile(filePath, true))
-        spdlog::warn("Failed setting permissions of '{}'.", filePath.string());
-    }
-#ifdef WINDOWS
-    Shell::ProtectFile(filePath, false);
-#endif
-    auto jsonStr = devicesJson.dump();
-    auto isWritten = Shell::WriteBytes(filePath, {jsonStr.begin(), jsonStr.end()});
-    if(!Shell::ProtectFile(filePath, true))
-      spdlog::warn("Failed setting permissions of '{}'.", filePath.string());
-    if(!isWritten)
-      throw std::runtime_error(fmt::format("Error writing '{}'.", filePath.string()));
+    const auto directory = AppSettings::GetBaseDir();
+    EnsureStorageDirectory(directory);
+    const auto data = SerializeDevices(devices).dump();
+    if(!Shell::WriteBytesAtomic(directory / DEVICES_FILE_NAME, {data.begin(), data.end()}))
+      throw std::runtime_error("Cannot persist paired-device storage.");
     g_Cache = devices;
-  } catch(const std::exception &ex) {
-    spdlog::error("Failed writing paired devices storage: {}", ex.what());
+    return true;
+  } catch(...) {
+    spdlog::error("Failed to save paired-device storage.");
+    return false;
   }
+}
+
+size_t PairedDevicesStorage::ConsumeRemovedCloudCount() {
+  std::unique_lock lock(g_Mutex);
+  return std::exchange(g_RemovedCloudCount, 0);
 }
 
 void PairedDevicesStorage::InvalidateCache() {
   std::unique_lock lock(g_Mutex);
-  g_Cache = {};
+  g_Cache.clear();
+  g_Loaded = false;
 }

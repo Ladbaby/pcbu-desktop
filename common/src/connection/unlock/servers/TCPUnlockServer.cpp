@@ -4,6 +4,8 @@
 #include "connection/stream/SocketStream.h"
 #include "handler/UnlockState.h"
 #include "storage/AppSettings.h"
+#include "platform/NetworkHelper.h"
+#include <boost/asio/ip/address_v4.hpp>
 #include "storage/PairedDevicesStorage.h"
 
 #ifdef WINDOWS
@@ -47,6 +49,15 @@ void TCPUnlockServer::AcceptThread() {
   struct sockaddr_in address {};
   socklen_t addrLen = sizeof(address);
   auto settings = AppSettings::Get();
+  const auto localAddress = NetworkHelper::GetSavedNetworkInterface().ipAddress;
+  boost::system::error_code addressError;
+  const auto selectedAddress = boost::asio::ip::make_address_v4(localAddress, addressError);
+  if(addressError || selectedAddress.is_unspecified()) {
+    spdlog::error("Configured network interface is unavailable; refusing wildcard listener.");
+    m_IsRunning = false;
+    m_UnlockState = UnlockState::PORT_ERROR;
+    return;
+  }
   auto clientThreads = std::vector<std::thread>();
   spdlog::info("Starting TCP server...");
 
@@ -70,7 +81,7 @@ void TCPUnlockServer::AcceptThread() {
   }
 
   address.sin_family = AF_INET;
-  address.sin_addr.s_addr = INADDR_ANY;
+  address.sin_addr.s_addr = htonl(selectedAddress.to_uint());
   address.sin_port = htons(settings.unlockServerPort);
   if(bind(m_ServerSocket, reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) < 0) {
     spdlog::error("bind() failed. (Code={})", SOCKET_LAST_ERROR);

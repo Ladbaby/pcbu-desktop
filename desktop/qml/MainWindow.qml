@@ -217,6 +217,8 @@ ApplicationWindow {
         PairingForm.OnNextClicked(viewLoader, window);
     }
 
+    function showUpdateCheckResult(text) { showInfoMessage(text); }
+
     function showUpdaterWindow() {
         let updaterWin = Qt.createComponent("qrc:/ui/UpdaterWindow.qml").createObject(window);
         updaterWin.show();

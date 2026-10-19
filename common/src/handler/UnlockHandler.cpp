@@ -4,7 +4,6 @@
 
 #include "KeyScanner.h"
 #include "connection/unlock/clients/BTUnlockClient.h"
-#include "connection/unlock/clients/CloudUnlockClient.h"
 #include "connection/unlock/clients/TCPUnlockClient.h"
 #include "connection/unlock/servers/TCPUnlockServer.h"
 #include "storage/AppSettings.h"
@@ -71,6 +70,8 @@ UnlockResult UnlockHandler::GetResult(const std::string &authUser, const std::st
         break;
       case PairingMethod::MANUAL_UDP:
       case PairingMethod::UDP: {
+        if(!settings.udpDiscoveryEnabled)
+          continue;
         if(udpBroadcaster == nullptr)
           udpBroadcaster = new UDPUnlockBroadcaster();
         auto port = device.pairingMethod == PairingMethod::UDP ? device.udpPort : device.udpManualPort;
@@ -79,9 +80,6 @@ UnlockResult UnlockHandler::GetResult(const std::string &authUser, const std::st
         hasTCPServer = true;
         continue;
       }
-      case PairingMethod::CLOUD:
-        connection = new CloudUnlockClient(device);
-        break;
       default: {
         spdlog::error("Invalid pairing method.");
         continue;
@@ -238,6 +236,7 @@ UnlockResult UnlockHandler::RunServer(BaseUnlockConnection *connection, UDPUnloc
   result.state = state;
   result.device = connection->GetDevice();
   result.password = pwDec.has_value() ? pwDec.value() : "";
+  if(pwDec && !pwDec->empty()) OPENSSL_cleanse(pwDec->data(), pwDec->size());
   if(state == UnlockState::SUCCESS)
     result.passwordKey = connection->GetResponseData().passwordKey;
   return result;

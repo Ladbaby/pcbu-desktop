@@ -23,17 +23,19 @@ public:
 
   static std::vector<uint8_t> ReadBytes(const std::filesystem::path &path);
   static bool WriteBytes(const std::filesystem::path &path, const std::vector<uint8_t> &data);
+  static bool WriteBytesAtomic(const std::filesystem::path &path, const std::vector<uint8_t> &data);
 
   static bool ProtectFile(const std::filesystem::path &path, bool enabled);
+  // Thread-local, bounded stage/code only; never contains file contents or paths.
+  static void ClearOperationError();
+  static bool FailOperation(const char *stage, unsigned long code);
+  static std::string GetOperationError();
 
 private:
   LocalShell() = default;
 
   static ShellCmdResult RunShell(const std::string &cmd, bool loadUserConfig);
 
-#ifdef WINDOWS
-  static bool ModifyFileAccess(const std::string &filePath, const std::string &sid, bool deny);
-#endif
 };
 
 #endif

@@ -64,8 +64,9 @@ bool SshServersWindow::AddServer(QObject *dialog, const QString &deviceId, const
         server.keyPath = keyStr;
         server.passwordEnc = enc.value();
         newDevice->sshServers.emplace_back(server);
-        PairedDevicesStorage::AddDevice(newDevice.value());
-        ok = true;
+        ok = PairedDevicesStorage::AddDevice(newDevice.value());
+        if(!ok)
+          error = QStringLiteral("Failed to save SSH credentials.");
       }
     }
     m_IsRunning.store(false);

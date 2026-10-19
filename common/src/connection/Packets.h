@@ -26,7 +26,6 @@ struct PacketPairInit { // From phone
   uint16_t tcpPort{};
   uint16_t udpPort{};
   uint16_t udpManualPort{};
-  std::string cloudToken{};
 
   static std::optional<PacketPairInit> FromJson(const std::string &jsonStr) {
     try {
@@ -40,7 +39,6 @@ struct PacketPairInit { // From phone
         packet.tcpPort = json["tcpPort"];
         packet.udpPort = json["udpPort"];
         packet.udpManualPort = json["udpManualPort"];
-        packet.cloudToken = json["cloudToken"];
       } catch(...) {
       }
       return packet;

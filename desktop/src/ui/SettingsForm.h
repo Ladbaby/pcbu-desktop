@@ -26,6 +26,8 @@ public:
     clientSocketTimeout = settings.clientSocketTimeout;
     clientConnectTimeout = settings.clientConnectTimeout;
     clientConnectRetries = settings.clientConnectRetries;
+    automaticUpdateChecks = settings.automaticUpdateChecks;
+    udpDiscoveryEnabled = settings.udpDiscoveryEnabled;
   }
   [[nodiscard]] PCBUAppStorage ToStorage() const {
     auto settings = AppSettings::Get();
@@ -40,6 +42,8 @@ public:
     settings.clientSocketTimeout = clientSocketTimeout;
     settings.clientConnectTimeout = clientConnectTimeout;
     settings.clientConnectRetries = clientConnectRetries;
+    settings.automaticUpdateChecks = automaticUpdateChecks;
+    settings.udpDiscoveryEnabled = udpDiscoveryEnabled;
     return settings;
   }
 
@@ -54,6 +58,10 @@ public:
   uint32_t clientSocketTimeout{};
   uint32_t clientConnectTimeout{};
   uint32_t clientConnectRetries{};
+  bool automaticUpdateChecks{false};
+  bool udpDiscoveryEnabled{false};
+  Q_PROPERTY(bool automaticUpdateChecks MEMBER automaticUpdateChecks)
+  Q_PROPERTY(bool udpDiscoveryEnabled MEMBER udpDiscoveryEnabled)
   Q_PROPERTY(QString machineID MEMBER machineID)
   Q_PROPERTY(QString installedVersion MEMBER installedVersion)
   Q_PROPERTY(QString language MEMBER language)
@@ -104,6 +112,7 @@ public:
 
   Q_INVOKABLE QString GetOperatingSystem();
 
+  Q_INVOKABLE bool IsUDPDiscoveryEnabled() { return AppSettings::Get().udpDiscoveryEnabled; }
   Q_INVOKABLE bool HasUDPDevices();
   Q_INVOKABLE void RemoveUDPDevices();
 

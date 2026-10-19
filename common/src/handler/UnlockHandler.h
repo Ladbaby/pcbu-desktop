@@ -5,6 +5,7 @@
 #include <future>
 #include <string>
 #include <vector>
+#include <openssl/crypto.h>
 
 #include "UnlockState.h"
 #include "connection/unlock/BaseUnlockConnection.h"
@@ -13,6 +14,24 @@
 
 struct UnlockResult {
   UnlockResult() = default;
+  ~UnlockResult() { ClearSecrets(); }
+  UnlockResult(const UnlockResult &) = default;
+  UnlockResult &operator=(const UnlockResult &other) {
+    if(this != &other) {
+      ClearSecrets();
+      state = other.state;
+      device = other.device;
+      password = other.password;
+      passwordKey = other.passwordKey;
+    }
+    return *this;
+  }
+  void ClearSecrets() {
+    if(!password.empty()) OPENSSL_cleanse(password.data(), password.size());
+    if(!passwordKey.empty()) OPENSSL_cleanse(passwordKey.data(), passwordKey.size());
+    password.clear();
+    passwordKey.clear();
+  }
   explicit UnlockResult(UnlockState state) {
     this->state = state;
   }

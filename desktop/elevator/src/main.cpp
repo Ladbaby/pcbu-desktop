@@ -15,6 +15,7 @@
 #include "shell/ElevatorCommands.h"
 #include "shell/IPCHelper.h"
 #include "shell/LocalShell.h"
+#include "shell/WindowsOperations.h"
 #include "storage/LoggingSystem.h"
 
 class ElevatorApp {
@@ -45,8 +46,15 @@ bool ElevatorApp::SendResponse(IPCHelper &ipc, const ElevatorCommandResponse &re
 }
 
 ElevatorCommandResponse ElevatorApp::HandleCommand(const ElevatorCommand &cmd) {
+#ifdef WINDOWS
+  return WindowsOperations::Execute(cmd);
+#else
   try {
     switch(cmd.type) {
+      case ElevatorCommandType::EXISTS:
+        return ElevatorCommandResponse(ShellCmdResult{std::filesystem::exists(cmd.args.at(0)) ? 0 : 1, {}});
+      case ElevatorCommandType::WRITE_ATOMIC:
+        return ToResponse(LocalShell::WriteBytesAtomic(cmd.args.at(0), cmd.dataBytes));
       case ElevatorCommandType::RUN_CMD:
         return ElevatorCommandResponse(LocalShell::RunCommand(cmd.args.at(0)));
       case ElevatorCommandType::READ_BYTES: {
@@ -75,8 +83,9 @@ ElevatorCommandResponse ElevatorApp::HandleCommand(const ElevatorCommand &cmd) {
     }
   } catch(const std::exception &ex) {
     spdlog::error("[Elevator] Failed executing command. ({}, Exception={})", cmd.ToString(), ex.what());
-    return ElevatorCommandResponse(true, ex.what());
+    return ElevatorCommandResponse(true, "Operation failed.");
   }
+#endif
 }
 
 ElevatorCommandResponse ElevatorApp::ToResponse(bool success) {

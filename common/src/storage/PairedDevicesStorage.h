@@ -1,7 +1,9 @@
 #ifndef PCBU_DESKTOP_PAIREDDEVICESSTORAGE_H
 #define PCBU_DESKTOP_PAIREDDEVICESSTORAGE_H
 
+#include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -29,7 +31,6 @@ struct PairedDevice {
   uint16_t udpPort{};
   uint16_t udpManualPort{};
   std::string bluetoothAddress{};
-  std::string cloudToken{};
 
   std::vector<SshServer> sshServers{};
 };
@@ -39,11 +40,12 @@ public:
   static std::optional<PairedDevice> GetDeviceByID(const std::string &id);
   static std::vector<PairedDevice> GetDevicesForUser(const std::string &userName);
 
-  static void AddDevice(const PairedDevice &device);
+  static bool AddDevice(const PairedDevice &device);
   static void RemoveDevice(const std::string &id);
 
   static std::vector<PairedDevice> GetDevices();
-  static void SaveDevices(const std::vector<PairedDevice> &devices);
+  static bool SaveDevices(const std::vector<PairedDevice> &devices);
+  static size_t ConsumeRemovedCloudCount();
 
   static void InvalidateCache();
 
@@ -52,6 +54,8 @@ private:
 
   static std::vector<PairedDevice> g_Cache;
   static std::mutex g_Mutex;
+  static bool g_Loaded;
+  static size_t g_RemovedCloudCount;
 
   static constexpr std::string_view DEVICES_FILE_NAME = "paired_devices.json";
 };

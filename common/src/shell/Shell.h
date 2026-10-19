@@ -36,6 +36,9 @@ public:
   static bool WriteBytes(const std::filesystem::path &path, const std::vector<uint8_t> &data);
 
   static bool ProtectFile(const std::filesystem::path &path, bool enabled);
+  static bool WindowsOperation(ElevatorCommandType type);
+  static bool Exists(const std::filesystem::path &path);
+  static bool WriteBytesAtomic(const std::filesystem::path &path, const std::vector<uint8_t> &data);
 
 private:
   Shell() = default;

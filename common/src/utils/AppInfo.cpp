@@ -20,10 +20,6 @@ std::string AppInfo::GetUnlockProtocolVersion() {
   return "3.0.0";
 }
 
-std::string AppInfo::GetRelayProtocolVersion() {
-  return "1.0.0";
-}
-
 std::string AppInfo::GetOperatingSystem() {
 #ifdef WINDOWS
   return "Windows";

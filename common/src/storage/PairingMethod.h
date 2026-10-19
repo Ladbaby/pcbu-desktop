@@ -3,8 +3,10 @@
 
 #include <spdlog/spdlog.h>
 #include <string>
+#include <stdexcept>
 
-enum class PairingMethod : int { TCP, BLUETOOTH, CLOUD, UDP, MANUAL_UDP };
+// Value 2 is reserved for the removed cloud transport.
+enum class PairingMethod : int { TCP = 0, BLUETOOTH = 1, UDP = 3, MANUAL_UDP = 4 };
 
 class PairingMethodUtils {
 public:
@@ -13,8 +15,6 @@ public:
       return "TCP";
     else if(method == PairingMethod::BLUETOOTH)
       return "BLUETOOTH";
-    else if(method == PairingMethod::CLOUD)
-      return "CLOUD";
     else if(method == PairingMethod::UDP)
       return "UDP";
     else if(method == PairingMethod::MANUAL_UDP)
@@ -28,14 +28,11 @@ public:
       return PairingMethod::TCP;
     else if(methodStr == "BLUETOOTH")
       return PairingMethod::BLUETOOTH;
-    else if(methodStr == "CLOUD")
-      return PairingMethod::CLOUD;
     else if(methodStr == "UDP")
       return PairingMethod::UDP;
     else if(methodStr == "MANUAL_UDP")
       return PairingMethod::MANUAL_UDP;
-    spdlog::warn("Invalid pairing method '{}'.", methodStr);
-    return PairingMethod::TCP;
+    throw std::runtime_error("Invalid pairing method.");
   }
 
 private:

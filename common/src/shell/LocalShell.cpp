@@ -1,4 +1,5 @@
 #include "LocalShell.h"
+#include <mutex>
 
 #include <boost/filesystem.hpp>
 #ifdef WINDOWS
@@ -9,7 +10,14 @@
 #include <boost/process/v2/process.hpp>
 #include <boost/process/v2/stdio.hpp>
 #endif
+#include <algorithm>
+#include <cstring>
 #include <fstream>
+#ifndef WINDOWS
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include <spdlog/spdlog.h>
 
 #include "utils/StringUtils.h"
@@ -20,6 +28,10 @@
 #include <boost/process/v1/windows.hpp>
 // #include <boost/process/v2/windows/creation_flags.hpp>
 #include <sddl.h>
+#ifndef NOMINMAX
+#undef min
+#undef max
+#endif
 #undef CreateFile
 
 #define SHELL_NAME "cmd.exe"
@@ -34,6 +46,14 @@
 #define SHELL_NO_RC_ARG "-f"
 #define CHOWN_USER "root"
 #endif
+
+namespace { thread_local std::string operationError; }
+void LocalShell::ClearOperationError() { operationError.clear(); }
+bool LocalShell::FailOperation(const char *stage, unsigned long code) {
+  operationError = fmt::format("Stage={}, Code={}", stage, code);
+  return false;
+}
+std::string LocalShell::GetOperationError() { return operationError; }
 
 bool LocalShell::IsRunningAsAdmin() {
 #ifdef WINDOWS
@@ -94,7 +114,7 @@ ShellCmdResult LocalShell::RunShell(const std::string &cmd, bool loadUserConfig)
   proc.wait();
 #endif
 
-  spdlog::debug("Process exit. Code: {} Command: '{}' Output: '{}'", proc.exit_code(), cmd, StringUtils::Trim(output));
+  spdlog::debug("Process exit. Code: {}", proc.exit_code());
   auto result = ShellCmdResult();
   result.exitCode = proc.exit_code();
   result.output = output;
@@ -113,9 +133,32 @@ void LocalShell::SpawnCommand(const std::string &cmd) {
 }
 
 bool LocalShell::CreateDir(const std::filesystem::path &path) {
+#ifdef WINDOWS
+  if(!IsRunningAsAdmin()) {
+    boost::system::error_code ec{};
+    boost::filesystem::create_directories(boost::filesystem::path(path), ec);
+    return !ec.failed();
+  }
+  // Never recreate an unreadable existing directory.
+  if(std::filesystem::exists(path))
+    return std::filesystem::is_directory(path) && ProtectFile(path, true);
+  if(!std::filesystem::exists(path.parent_path()) && !CreateDir(path.parent_path()))
+    return false;
+  PSECURITY_DESCRIPTOR descriptor{};
+  if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+         L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", SDDL_REVISION_1, &descriptor, nullptr))
+    return false;
+  SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), descriptor, FALSE};
+  const bool created = CreateDirectoryW(path.c_str(), &attributes) != FALSE;
+  const auto error = created ? ERROR_SUCCESS : GetLastError();
+  LocalFree(descriptor);
+  if(!created && error != ERROR_ALREADY_EXISTS) return FailOperation("directory.create", error);
+  return std::filesystem::is_directory(path) && ProtectFile(path, true);
+#else
   boost::system::error_code ec{};
   boost::filesystem::create_directories(boost::filesystem::path(path), ec);
   return !ec.failed();
+#endif
 }
 
 bool LocalShell::CreateFile(const std::filesystem::path &path) {
@@ -149,115 +192,200 @@ bool LocalShell::WriteBytes(const std::filesystem::path &path, const std::vector
   return !file.fail() && !file.bad();
 }
 
-bool LocalShell::ProtectFile(const std::filesystem::path &path, bool enabled) {
-  if(!std::filesystem::exists(path))
-    return false;
 #ifdef WINDOWS
-  PSID pSystemSid = nullptr;
-  BOOL bIsSystem = FALSE;
-  if(!ConvertStringSidToSidW(L"S-1-5-18", &pSystemSid)) {
-    spdlog::error("Failed to create SYSTEM SID. (Code={})", GetLastError());
-  } else if(!CheckTokenMembership(nullptr, pSystemSid, &bIsSystem)) {
-    spdlog::error("Failed to check token membership. (Code={})", GetLastError());
-    bIsSystem = FALSE;
+namespace {
+std::mutex storagePrivilegeMutex;
+class ScopedStoragePrivileges {
+  std::unique_lock<std::mutex> lock{storagePrivilegeMutex};
+  HANDLE token{};
+  TOKEN_PRIVILEGES oldBackup{}, oldRestore{};
+  bool backupChanged{}, restoreChanged{};
+  void Enable(const wchar_t *name, TOKEN_PRIVILEGES &previous, bool &changed) {
+    TOKEN_PRIVILEGES privileges{};
+    privileges.PrivilegeCount = 1;
+    if(!LookupPrivilegeValueW(nullptr, name, &privileges.Privileges[0].Luid))
+      return;
+    privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    DWORD size = sizeof(previous);
+    changed = AdjustTokenPrivileges(token, FALSE, &privileges, sizeof(previous), &previous, &size) && GetLastError() == ERROR_SUCCESS;
   }
-  if(pSystemSid)
-    LocalFree(pSystemSid);
-  if(!ModifyFileAccess(path.string(), "S-1-5-32-545", enabled)) {
-    spdlog::error("Error setting file permissions.");
-    return bIsSystem;
-  }
-#else
-  if(enabled) {
-    auto cmd = RunCommand(fmt::format("chown {0} {1} && chmod 600 {1}", CHOWN_USER, StringUtils::ShellQuote(path.string())));
-    if(cmd.exitCode != 0) {
-      spdlog::error("Error setting file permissions. (Code={})", cmd.exitCode);
-      return false;
+public:
+  ScopedStoragePrivileges() {
+    if(OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
+      Enable(L"SeBackupPrivilege", oldBackup, backupChanged);
+      Enable(L"SeRestorePrivilege", oldRestore, restoreChanged);
     }
   }
-#endif
+  ~ScopedStoragePrivileges() {
+    if(token) {
+      if(restoreChanged) AdjustTokenPrivileges(token, FALSE, &oldRestore, 0, nullptr, nullptr);
+      if(backupChanged) AdjustTokenPrivileges(token, FALSE, &oldBackup, 0, nullptr, nullptr);
+      CloseHandle(token);
+    }
+  }
+};
+bool NoReparsePoints(const std::filesystem::path &path) {
+  auto current = std::filesystem::absolute(path).lexically_normal();
+  while(!current.empty()) {
+    const DWORD attributes = GetFileAttributesW(current.c_str());
+    if(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
+      return false;
+    if(current == current.root_path())
+      break;
+    current = current.parent_path();
+  }
   return true;
 }
+struct StorageSecurity {
+  PSECURITY_DESCRIPTOR descriptor{};
+  SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, FALSE};
+  StorageSecurity() {
+    if(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+           L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", SDDL_REVISION_1, &descriptor, nullptr))
+      attributes.lpSecurityDescriptor = descriptor;
+  }
+  ~StorageSecurity() { if(descriptor) LocalFree(descriptor); }
+};
+}
+#endif
 
+bool LocalShell::ProtectFile(const std::filesystem::path &path, bool enabled) {
 #ifdef WINDOWS
-bool LocalShell::ModifyFileAccess(const std::string &filePath, const std::string &sid, bool deny) {
-  PSID pSid{};
-  if(!ConvertStringSidToSidW(StringUtils::ToWideString(sid).c_str(), &pSid)) {
-    spdlog::error("Failed to convert SID. (Code={})", GetLastError());
+  // Protection can no longer be disabled, including by legacy callers.
+  if(!NoReparsePoints(path))
+    return FailOperation("acl.reparse", ERROR_REPARSE_TAG_INVALID);
+  ScopedStoragePrivileges privileges;
+  HANDLE handle = CreateFileW(path.c_str(), READ_CONTROL | WRITE_DAC | WRITE_OWNER,
+                              FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                              FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if(handle == INVALID_HANDLE_VALUE)
+    return FailOperation("acl.open", GetLastError());
+  BY_HANDLE_FILE_INFORMATION info{};
+  if(!GetFileInformationByHandle(handle, &info) ||
+     (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+     (!(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && info.nNumberOfLinks != 1)) {
+    CloseHandle(handle);
     return false;
   }
-
-  auto filePathStr = StringUtils::ToWideString(filePath);
-  PACL pOldDACL{};
-  PSECURITY_DESCRIPTOR pSD{};
-  DWORD dwRes = GetNamedSecurityInfoW(filePathStr.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr, &pOldDACL, nullptr, &pSD);
-  if(dwRes != ERROR_SUCCESS) {
-    spdlog::error("GetNamedSecurityInfo() failed. (Code={})", dwRes);
-    if(pSid)
-      LocalFree(pSid);
-    return false;
-  }
-
-  EXPLICIT_ACCESS_W ea{};
-  ea.grfAccessPermissions = GENERIC_ALL;
-  ea.grfAccessMode = deny ? DENY_ACCESS : GRANT_ACCESS;
-  ea.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
-  ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-  ea.Trustee.TrusteeType = TRUSTEE_IS_GROUP;
-  ea.Trustee.ptstrName = (LPWCH)pSid;
-  bool aceExists = false;
-  ACL_SIZE_INFORMATION aclSizeInfo{};
-  if(GetAclInformation(pOldDACL, &aclSizeInfo, sizeof(ACL_SIZE_INFORMATION), AclSizeInformation)) {
-    for(DWORD i = 0; i < aclSizeInfo.AceCount; ++i) {
-      LPVOID pAce;
-      if(GetAce(pOldDACL, i, &pAce)) {
-        auto aceHeader = (ACE_HEADER *)pAce;
-        bool isInherited = (aceHeader->AceFlags & INHERITED_ACE) != 0;
-        if(!isInherited && (aceHeader->AceType == ACCESS_ALLOWED_ACE_TYPE || aceHeader->AceType == ACCESS_DENIED_ACE_TYPE)) {
-          auto ace = (ACCESS_ALLOWED_ACE *)pAce;
-          if(EqualSid(pSid, &ace->SidStart)) {
-            aceExists = true;
-            ace->Mask = ea.grfAccessPermissions;
-            aceHeader->AceType = deny ? ACCESS_DENIED_ACE_TYPE : ACCESS_ALLOWED_ACE_TYPE;
-            break;
+  StorageSecurity security;
+  bool success = false;
+  if(security.descriptor) {
+    PACL dacl{};
+    PSID owner{};
+    BOOL present{}, defaulted{};
+    if(GetSecurityDescriptorDacl(security.descriptor, &present, &dacl, &defaulted) &&
+       GetSecurityDescriptorOwner(security.descriptor, &owner, &defaulted)) {
+      const auto setResult = SetSecurityInfo(handle, SE_FILE_OBJECT,
+                               DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+                               owner, nullptr, dacl, nullptr);
+      success = setResult == ERROR_SUCCESS;
+      if(!success) FailOperation("acl.set", setResult);
+      if(success) {
+        PACL actual{};
+        PSID actualOwner{};
+        PSECURITY_DESCRIPTOR actualDescriptor{};
+        const auto getResult = GetSecurityInfo(handle, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+                                  &actualOwner, nullptr, &actual, nullptr, &actualDescriptor);
+        success = getResult == ERROR_SUCCESS;
+        if(!success) FailOperation("acl.readback", getResult);
+        if(success) {
+          SECURITY_DESCRIPTOR_CONTROL control{};
+          DWORD revision{};
+          success = actual && actualOwner && EqualSid(owner, actualOwner) && actual->AceCount == 2 &&
+                    GetSecurityDescriptorControl(actualDescriptor, &control, &revision) && (control & SE_DACL_PROTECTED);
+          bool system = false, administrators = false;
+          for(DWORD i = 0; success && i < actual->AceCount; ++i) {
+            void *entry{};
+            success = GetAce(actual, i, &entry) != FALSE;
+            if(!success) break;
+            const auto ace = static_cast<ACCESS_ALLOWED_ACE *>(entry);
+            success = ace->Header.AceType == ACCESS_ALLOWED_ACE_TYPE && ace->Mask == FILE_ALL_ACCESS;
+            auto sid = reinterpret_cast<PSID>(&ace->SidStart);
+            if(IsWellKnownSid(sid, WinLocalSystemSid)) system = true;
+            else if(IsWellKnownSid(sid, WinBuiltinAdministratorsSid)) administrators = true;
+            else success = false;
           }
+          success = success && system && administrators;
         }
+        if(actualDescriptor) LocalFree(actualDescriptor);
       }
     }
   }
-
-  PACL pNewDACL{};
-  if(!aceExists) {
-    dwRes = SetEntriesInAclW(1, &ea, pOldDACL, &pNewDACL);
-    if(dwRes != ERROR_SUCCESS) {
-      spdlog::error("SetEntriesInAcl() failed. (Code={})", dwRes);
-      if(pSD)
-        LocalFree(pSD);
-      if(pSid)
-        LocalFree(pSid);
-      return false;
-    }
-  } else {
-    pNewDACL = pOldDACL;
-  }
-  dwRes = SetNamedSecurityInfoW((LPWSTR)filePathStr.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr, pNewDACL, nullptr);
-  if(dwRes != ERROR_SUCCESS) {
-    spdlog::error("SetNamedSecurityInfo() failed. (Code={})", dwRes);
-    if(!aceExists && pNewDACL)
-      LocalFree(pNewDACL);
-    if(pSD)
-      LocalFree(pSD);
-    if(pSid)
-      LocalFree(pSid);
+  CloseHandle(handle);
+  if(!success && GetOperationError().empty()) FailOperation("acl.verify", ERROR_INVALID_SECURITY_DESCR);
+  return success;
+#else
+  if(!enabled)
+    return true;
+  struct stat info{};
+  if(lstat(path.c_str(), &info) != 0 || S_ISLNK(info.st_mode))
     return false;
-  }
-
-  if(!aceExists && pNewDACL)
-    LocalFree(pNewDACL);
-  if(pSD)
-    LocalFree(pSD);
-  if(pSid)
-    LocalFree(pSid);
-  return true;
-}
+  return chown(path.c_str(), 0, 0) == 0 && chmod(path.c_str(), S_ISDIR(info.st_mode) ? 0755 : 0600) == 0;
 #endif
+}
+
+bool LocalShell::WriteBytesAtomic(const std::filesystem::path &path, const std::vector<uint8_t> &data) {
+  const auto parent = path.parent_path();
+  if(!ProtectFile(parent, true))
+    return false;
+  const auto random = StringUtils::RandomString(24, false);
+  if(random.empty())
+    return false;
+  const auto temporary = parent / (".pcbu-" + random + ".tmp");
+#ifdef WINDOWS
+  if(!NoReparsePoints(path))
+    return FailOperation("acl.reparse", ERROR_REPARSE_TAG_INVALID);
+  if(std::filesystem::exists(path) && !ProtectFile(path, true))
+    return false;
+  StorageSecurity security;
+  if(!security.descriptor)
+    return false;
+  HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, &security.attributes, CREATE_NEW,
+                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if(file == INVALID_HANDLE_VALUE)
+    return FailOperation("atomic.create", GetLastError());
+  size_t offset = 0;
+  bool success = true;
+  while(offset < data.size()) {
+    DWORD written{};
+    const DWORD length = static_cast<DWORD>(std::min<size_t>(data.size() - offset, 1024 * 1024));
+    if(!WriteFile(file, data.data() + offset, length, &written, nullptr)) {
+      FailOperation("atomic.write", GetLastError());
+      success = false;
+      break;
+    }
+    if(written == 0) {
+      FailOperation("atomic.short_write", ERROR_WRITE_FAULT);
+      success = false;
+      break;
+    }
+    offset += written;
+  }
+  if(success && !FlushFileBuffers(file)) success = FailOperation("atomic.flush", GetLastError());
+  CloseHandle(file);
+  success = success && ProtectFile(temporary, true);
+  if(success && !MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    success = FailOperation("atomic.replace", GetLastError());
+  if(!success)
+    DeleteFileW(temporary.c_str());
+  return success;
+#else
+  const int file = open(temporary.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0600);
+  if(file < 0)
+    return false;
+  size_t offset = 0;
+  bool success = true;
+  while(offset < data.size()) {
+    const auto written = write(file, data.data() + offset, data.size() - offset);
+    if(written <= 0) { success = false; break; }
+    offset += static_cast<size_t>(written);
+  }
+  success = success && fchmod(file, 0600) == 0 && fchown(file, 0, 0) == 0 && fsync(file) == 0;
+  close(file);
+  if(success)
+    success = rename(temporary.c_str(), path.c_str()) == 0;
+  if(!success)
+    unlink(temporary.c_str());
+  return success;
+#endif
+}

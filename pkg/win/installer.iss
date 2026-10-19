@@ -1,3 +1,7 @@
+#ifndef InstallerSourceDir
+  #define InstallerSourceDir "..\build\installer_dir"
+#endif
+
 [Setup]
 AppId=PC Bio Unlock
 AppName=PulseUnlock
@@ -20,7 +24,12 @@ ArchitecturesInstallIn64BitMode={#GetEnv('ARCH')}
 ;ArchitecturesInstallIn64BitMode=arm64
 
 [Files]
-Source: "..\build\installer_dir\*"; DestDir: "{app}"; Flags: recursesubdirs
+; Test builds may share the same version resource. Always replace our own binaries,
+; but retain normal version checks for bundled third-party runtime files.
+Source: "{#InstallerSourceDir}\pcbu_desktop.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#InstallerSourceDir}\pcbu_elevator.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#InstallerSourceDir}\pcbu_storage_test.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#InstallerSourceDir}\*"; DestDir: "{app}"; Excludes: "pcbu_desktop.exe,pcbu_elevator.exe,pcbu_storage_test.exe"; Flags: recursesubdirs
 
 [InstallDelete]
 Type: filesandordirs; Name: "{commonprograms}\PC Bio Unlock"
@@ -59,7 +68,9 @@ var
 begin
   if ShellExec('runas', FileName, '/install /quiet /norestart', '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
   begin
-    Log('vcredist installed successfully.');
+    if (ResultCode <> 0) and (ResultCode <> 1638) and (ResultCode <> 3010) then
+      RaiseException('Microsoft runtime installation failed. Exit code: ' + IntToStr(ResultCode));
+    Log('vcredist installation completed.');
   end
   else
   begin

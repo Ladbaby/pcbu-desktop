@@ -1,6 +1,7 @@
 #ifndef PCBU_DESKTOP_CRYPTUTILS_H
 #define PCBU_DESKTOP_CRYPTUTILS_H
 
+#include <openssl/crypto.h>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -13,6 +14,9 @@ enum class PacketError;
 enum PacketCryptResult { OK, INVALID_TIMESTAMP, PACKET_ERROR, OTHER_ERROR };
 
 struct CryptPacket {
+  ~CryptPacket() {
+    if(!data.empty()) OPENSSL_cleanse(data.data(), data.size());
+  }
   PacketCryptResult result{};
   PacketError error{};
   std::vector<uint8_t> data{};

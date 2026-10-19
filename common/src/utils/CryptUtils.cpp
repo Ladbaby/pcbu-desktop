@@ -4,6 +4,7 @@
 #include "Utils.h"
 
 #include <cstring>
+#include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -49,7 +50,8 @@ CryptPacket CryptUtils::EncryptAESPacket(const std::vector<uint8_t> &data, const
   if(data.size() > CRYPT_BUFFER_SIZE)
     return {PacketCryptResult::OTHER_ERROR};
 
-  auto dataBuf = static_cast<uint8_t *>(malloc(data.size() + sizeof(int64_t)));
+  auto dataLen = data.size() + sizeof(int64_t);
+  auto dataBuf = static_cast<uint8_t *>(malloc(dataLen));
   if(dataBuf == nullptr)
     return {PacketCryptResult::OTHER_ERROR};
 
@@ -58,18 +60,24 @@ CryptPacket CryptUtils::EncryptAESPacket(const std::vector<uint8_t> &data, const
   memcpy(&dataBuf[sizeof(int64_t)], data.data(), data.size());
 
   auto encBuffer = static_cast<uint8_t *>(malloc(CRYPT_BUFFER_SIZE));
-  if(encBuffer == nullptr)
+  if(encBuffer == nullptr) {
+    OPENSSL_cleanse(dataBuf, dataLen);
+    free(dataBuf);
     return {PacketCryptResult::OTHER_ERROR};
+  }
 
-  auto encLen = EncryptAES(dataBuf, data.size() + sizeof(int64_t), encBuffer, CRYPT_BUFFER_SIZE, pwd.c_str());
+  auto encLen = EncryptAES(dataBuf, dataLen, encBuffer, CRYPT_BUFFER_SIZE, pwd.c_str());
+  OPENSSL_cleanse(dataBuf, dataLen);
   free(dataBuf);
   if(encLen <= sizeof(int64_t)) {
+    OPENSSL_cleanse(encBuffer, CRYPT_BUFFER_SIZE);
     free(encBuffer);
     return {PacketCryptResult::OTHER_ERROR};
   }
 
   std::vector<uint8_t> resultVec(encLen);
   memcpy(resultVec.data(), encBuffer, encLen);
+  OPENSSL_cleanse(encBuffer, CRYPT_BUFFER_SIZE);
   free(encBuffer);
   return {PacketCryptResult::OK, {}, resultVec};
 }
@@ -84,6 +92,7 @@ CryptPacket CryptUtils::DecryptAESPacket(const std::vector<uint8_t> &data, const
 
   auto decLen = DecryptAES(data.data(), data.size(), decBuffer, CRYPT_BUFFER_SIZE, pwd.c_str());
   if(decLen <= sizeof(int64_t)) {
+    OPENSSL_cleanse(decBuffer, CRYPT_BUFFER_SIZE);
     free(decBuffer);
     return {PacketCryptResult::OTHER_ERROR};
   }
@@ -95,12 +104,14 @@ CryptPacket CryptUtils::DecryptAESPacket(const std::vector<uint8_t> &data, const
 
   auto timeDiff = Utils::GetCurrentTimeMs() - timestamp;
   if(timeDiff < -CRYPT_PACKET_TIMEOUT || timeDiff > CRYPT_PACKET_TIMEOUT) {
+    OPENSSL_cleanse(decBuffer, CRYPT_BUFFER_SIZE);
     free(decBuffer);
     return {PacketCryptResult::INVALID_TIMESTAMP};
   }
 
   std::vector<uint8_t> resultVec(decLen);
   memcpy(resultVec.data(), &decBuffer[sizeof(int64_t)], decLen);
+  OPENSSL_cleanse(decBuffer, CRYPT_BUFFER_SIZE);
   free(decBuffer);
   return {PacketCryptResult::OK, {}, resultVec};
 }
@@ -115,12 +126,14 @@ std::optional<std::string> CryptUtils::EncryptAES(const std::string &data, const
 
   auto encLen = EncryptAES(reinterpret_cast<const uint8_t *>(data.c_str()), data.size(), encBuffer, CRYPT_BUFFER_SIZE, pwd.c_str());
   if(encLen <= 0) {
+    OPENSSL_cleanse(encBuffer, CRYPT_BUFFER_SIZE);
     free(encBuffer);
     return {};
   }
 
   std::vector<uint8_t> resultVec(encLen);
   memcpy(resultVec.data(), encBuffer, encLen);
+  OPENSSL_cleanse(encBuffer, CRYPT_BUFFER_SIZE);
   free(encBuffer);
   return StringUtils::ToHexString(resultVec);
 }
@@ -139,11 +152,13 @@ std::optional<std::string> CryptUtils::DecryptAES(const std::string &data, const
 
   auto decLen = DecryptAES(decVec.data(), decVec.size(), decBuffer, CRYPT_BUFFER_SIZE, pwd.c_str());
   if(decLen <= 0) {
+    OPENSSL_cleanse(decBuffer, CRYPT_BUFFER_SIZE);
     free(decBuffer);
     return {};
   }
 
   auto result = std::string(reinterpret_cast<char *>(decBuffer), decLen);
+  OPENSSL_cleanse(decBuffer, CRYPT_BUFFER_SIZE);
   free(decBuffer);
   return result;
 }
@@ -155,48 +170,76 @@ size_t CryptUtils::EncryptAES(const uint8_t *src, size_t srcLen, uint8_t *dst, s
     return false;
 
   unsigned char iv[IV_SIZE]{};
-  if(RAND_bytes(iv, IV_SIZE) != 1)
+  if(RAND_bytes(iv, IV_SIZE) != 1) {
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(dst, dstLen);
     return false;
+  }
   memcpy(dst, iv, IV_SIZE);
 
   unsigned char salt[SALT_SIZE]{};
-  if(RAND_bytes(salt, SALT_SIZE) != 1)
+  if(RAND_bytes(salt, SALT_SIZE) != 1) {
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
+    OPENSSL_cleanse(dst, dstLen);
     return false;
+  }
   memcpy(dst + IV_SIZE, salt, SALT_SIZE);
 
   unsigned char *key = GenerateKey(pwd, salt);
-  if(!key)
+  if(!key) {
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
+    OPENSSL_cleanse(dst, dstLen);
     return false;
+  }
 
   int numberOfBytes = 0;
   EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
   if(!ctx) {
+    OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
     free(key);
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
+    OPENSSL_cleanse(dst, dstLen);
     return false;
   }
 
   status = EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr);
   if(!status) {
+    OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
     free(key);
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
     return false;
   }
   status = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, IV_SIZE, nullptr);
   if(!status) {
+    OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
     free(key);
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
     return false;
   }
   status = EVP_CIPHER_CTX_set_padding(ctx, 0);
   if(!status) {
+    OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
     free(key);
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
     return false;
   }
   status = EVP_EncryptInit_ex(ctx, nullptr, nullptr, key, iv);
+  OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
   free(key);
+  OPENSSL_cleanse(iv, sizeof(iv));
+  OPENSSL_cleanse(salt, sizeof(salt));
   if(!status) {
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(dst, dstLen);
     return false;
   }
 
@@ -218,6 +261,8 @@ size_t CryptUtils::EncryptAES(const uint8_t *src, size_t srcLen, uint8_t *dst, s
     EVP_CIPHER_CTX_free(ctx);
     return false;
   }
+  OPENSSL_cleanse(iv, sizeof(iv));
+  OPENSSL_cleanse(salt, sizeof(salt));
   EVP_CIPHER_CTX_free(ctx);
   return IV_SIZE + SALT_SIZE + encryptedLen + GCM_TAG_SIZE;
 }
@@ -235,44 +280,71 @@ size_t CryptUtils::DecryptAES(const uint8_t *src, size_t srcLen, uint8_t *dst, s
   memcpy(salt, src + IV_SIZE, SALT_SIZE);
 
   unsigned char *key = GenerateKey(pwd, salt);
-  if(!key)
+  if(!key) {
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
+    OPENSSL_cleanse(dst, dstLen);
     return false;
+  }
 
   int numberOfBytes = 0;
   EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
   if(!ctx) {
+    OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
     free(key);
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
+    OPENSSL_cleanse(dst, dstLen);
     return false;
   }
 
   status = EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr);
   if(!status) {
+    OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
     free(key);
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
+    OPENSSL_cleanse(dst, dstLen);
     return false;
   }
   status = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, IV_SIZE, nullptr);
   if(!status) {
+    OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
     free(key);
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
+    OPENSSL_cleanse(dst, dstLen);
     return false;
   }
   status = EVP_CIPHER_CTX_set_padding(ctx, 0);
   if(!status) {
+    OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
     free(key);
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
+    OPENSSL_cleanse(dst, dstLen);
     return false;
   }
   status = EVP_DecryptInit_ex(ctx, nullptr, nullptr, key, iv);
+  OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
   free(key);
+  OPENSSL_cleanse(iv, sizeof(iv));
+  OPENSSL_cleanse(salt, sizeof(salt));
   if(!status) {
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(dst, dstLen);
     return false;
   }
 
   status = EVP_DecryptUpdate(ctx, dst, &numberOfBytes, src + IV_SIZE + SALT_SIZE, (int)srcLen - IV_SIZE - SALT_SIZE - GCM_TAG_SIZE);
   if(!status) {
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(dst, static_cast<size_t>(numberOfBytes));
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
     return false;
   }
 
@@ -280,13 +352,20 @@ size_t CryptUtils::DecryptAES(const uint8_t *src, size_t srcLen, uint8_t *dst, s
   status = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, GCM_TAG_SIZE, (void *)(src + srcLen - GCM_TAG_SIZE));
   if(!status) {
     EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(dst, static_cast<size_t>(decryptedLen));
+    OPENSSL_cleanse(iv, sizeof(iv));
+    OPENSSL_cleanse(salt, sizeof(salt));
     return false;
   }
 
   status = EVP_DecryptFinal_ex(ctx, dst + decryptedLen, &numberOfBytes);
+  OPENSSL_cleanse(iv, sizeof(iv));
+  OPENSSL_cleanse(salt, sizeof(salt));
   EVP_CIPHER_CTX_free(ctx);
-  if(!status)
+  if(!status) {
+    OPENSSL_cleanse(dst, dstLen);
     return false;
+  }
   return decryptedLen;
 }
 
@@ -295,6 +374,7 @@ uint8_t *CryptUtils::GenerateKey(const char *pwd, unsigned char *salt) {
   if(!key)
     return nullptr;
   if(PKCS5_PBKDF2_HMAC(pwd, (int)strlen(pwd), salt, SALT_SIZE, ITERATIONS, EVP_sha256(), AES_KEY_SIZE / 8, key) != 1) {
+    OPENSSL_cleanse(key, AES_KEY_SIZE / 8);
     free(key);
     return nullptr;
   }

@@ -20,6 +20,7 @@ UDPPairingBroadcaster::~UDPPairingBroadcaster() {
 }
 
 void UDPPairingBroadcaster::SendToTarget(const BroadcastTarget &target) {
+  if(!AppSettings::Get().udpDiscoveryEnabled) return;
   auto packet = PacketUDPPairBeacon();
   packet.serverId = m_ServerId;
   packet.ip = target.sourceIP;

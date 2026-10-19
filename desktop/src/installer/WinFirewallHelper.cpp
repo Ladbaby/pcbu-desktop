@@ -1,117 +1,69 @@
 #include "WinFirewallHelper.h"
-
 #include <Windows.h>
-#include <boost/filesystem.hpp>
 #include <netfw.h>
-#include <spdlog/spdlog.h>
+#include <filesystem>
+#include "storage/AppSettings.h"
 
-#include "utils/StringUtils.h"
-
-bool WinFirewallHelper::RemoveAllRulesForProgram(const std::string &exePath) {
-  HRESULT hr = S_OK;
-  INetFwPolicy2 *pPolicy{};
-  INetFwRules *pFwRules{};
-
-  hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-  if(FAILED(hr)) {
-    spdlog::error("Failed to initialize com.");
-    return false;
-  }
-  hr = CoCreateInstance(__uuidof(NetFwPolicy2), nullptr, CLSCTX_INPROC_SERVER, __uuidof(INetFwPolicy2), (void **)&pPolicy);
-  if(FAILED(hr)) {
-    spdlog::error("Failed to initialize firewall policy.");
-    CoUninitialize();
-    return false;
-  }
-
-  hr = pPolicy->get_Rules(&pFwRules);
-  if(FAILED(hr)) {
-    spdlog::error("Failed to get firewall rules.");
-    pPolicy->Release();
-    CoUninitialize();
-    return false;
-  }
-  long ruleCount{};
-  hr = pFwRules->get_Count(&ruleCount);
-  if(FAILED(hr)) {
-    spdlog::error("Failed to get firewall rule count.");
-    pFwRules->Release();
-    pPolicy->Release();
-    CoUninitialize();
-    return false;
-  }
-
-  IUnknown *pEnumerator{};
-  IEnumVARIANT *pVariant{};
-  hr = pFwRules->get__NewEnum(&pEnumerator);
-  if(FAILED(hr)) {
-    spdlog::error("Failed to get rules enumerator.");
-    pFwRules->Release();
-    pPolicy->Release();
-    CoUninitialize();
-    return false;
-  }
-  hr = pEnumerator->QueryInterface(IID_IEnumVARIANT, (void **)&pVariant);
-  if(FAILED(hr)) {
-    spdlog::error("Failed to get IEnumVARIANT interface.");
-    pEnumerator->Release();
-    pFwRules->Release();
-    pPolicy->Release();
-    CoUninitialize();
-    return false;
-  }
-
-  VARIANT var{};
-  VariantInit(&var);
-  while(pVariant->Next(1, &var, nullptr) == S_OK) {
-    INetFwRule *pFwRule{};
-    hr = V_DISPATCH(&var)->QueryInterface(__uuidof(INetFwRule), (void **)&pFwRule);
-    if(FAILED(hr)) {
-      VariantClear(&var);
-      continue;
+namespace {
+struct Bstr {
+  BSTR value;
+  explicit Bstr(const wchar_t *s):value(SysAllocString(s)){}
+  ~Bstr(){SysFreeString(value);}
+  operator BSTR() const {return value;}
+};
+bool Apply(bool install) {
+  const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  if(FAILED(init) && init != RPC_E_CHANGED_MODE) return false;
+  INetFwPolicy2 *policy{};
+  INetFwRules *rules{};
+  bool ok = SUCCEEDED(CoCreateInstance(__uuidof(NetFwPolicy2),nullptr,CLSCTX_INPROC_SERVER,__uuidof(INetFwPolicy2),reinterpret_cast<void **>(&policy)));
+  if(ok) ok=SUCCEEDED(policy->get_Rules(&rules));
+  const wchar_t *names[]={L"PulseUnlock Fork Local TCP",L"PulseUnlock Fork Local UDP",L"PulseUnlock Provider Local TCP",L"PulseUnlock Provider Local UDP"};
+  if(ok) {
+    // Delete only exact application-owned names, never all rules for a program.
+    for(auto name : {L"PulseUnlock", L"PC Bio Unlock", L"LogonUI (PulseUnlock)", L"LogonUI (PC Bio Unlock)"}) {
+      auto hr=rules->Remove(Bstr(name));
+      if(FAILED(hr) && hr!=HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) ok=false;
     }
-
-    BSTR fwRuleName{};
-    hr = pFwRule->get_Name(&fwRuleName);
-    if(FAILED(hr)) {
-      pFwRule->Release();
-      VariantClear(&var);
-      continue;
+    for(auto name:names) {
+      auto hr=rules->Remove(Bstr(name));
+      if(FAILED(hr) && hr!=HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) ok=false;
     }
-    NET_FW_RULE_DIRECTION direction{};
-    hr = pFwRule->get_Direction(&direction);
-    if(FAILED(hr)) {
-      SysFreeString(fwRuleName);
-      pFwRule->Release();
-      VariantClear(&var);
-      continue;
-    }
-
-    if(direction == NET_FW_RULE_DIR_IN || direction == NET_FW_RULE_DIR_OUT) {
-      BSTR program{};
-      hr = pFwRule->get_ApplicationName(&program);
-      if(SUCCEEDED(hr) && program != nullptr) {
-        auto programPath = boost::filesystem::path(std::wstring(program));
-        if(boost::filesystem::equivalent(programPath, boost::filesystem::path(exePath))) {
-          auto ruleName = StringUtils::FromWideString(fwRuleName);
-          hr = pFwRules->Remove(fwRuleName);
-          if(FAILED(hr))
-            spdlog::error("Failed to remove firewall rule {} for {}.", ruleName, programPath.string());
-          else
-            spdlog::info("Removed rule {} for {}.", ruleName, programPath.string());
-        }
-        SysFreeString(program);
-      }
-    }
-    SysFreeString(fwRuleName);
-    pFwRule->Release();
-    VariantClear(&var);
   }
-
-  pVariant->Release();
-  pEnumerator->Release();
-  pFwRules->Release();
-  pPolicy->Release();
-  CoUninitialize();
-  return true;
+  if(ok && install) {
+    const auto settings=AppSettings::Get();
+    if(!settings.pairingServerPort || !settings.unlockServerPort || !settings.pairingDiscoveryPort) ok=false;
+    wchar_t exe[MAX_PATH]{}, system[MAX_PATH]{};
+    if(!GetModuleFileNameW(nullptr,exe,MAX_PATH) || !GetSystemDirectoryW(system,MAX_PATH)) ok=false;
+    auto desktop=std::filesystem::path(exe).parent_path()/"pcbu_desktop.exe";
+    auto logon=std::filesystem::path(system)/"LogonUI.exe";
+    for(int i=0;ok && i<4;++i) {
+      const bool udp=(i%2)==1;
+      if(udp && !settings.udpDiscoveryEnabled) continue;
+      INetFwRule *rule{};
+      ok=SUCCEEDED(CoCreateInstance(__uuidof(NetFwRule),nullptr,CLSCTX_INPROC_SERVER,__uuidof(INetFwRule),reinterpret_cast<void **>(&rule)));
+      if(!ok) break;
+      auto ports=udp ? std::to_wstring(settings.pairingDiscoveryPort) :
+        std::to_wstring(settings.pairingServerPort)+L","+std::to_wstring(settings.unlockServerPort);
+      auto program=(i<2?desktop:logon).wstring();
+      ok=SUCCEEDED(rule->put_Name(Bstr(names[i]))) &&
+         SUCCEEDED(rule->put_ApplicationName(Bstr(program.c_str()))) &&
+         SUCCEEDED(rule->put_Protocol(udp?NET_FW_IP_PROTOCOL_UDP:NET_FW_IP_PROTOCOL_TCP)) &&
+         SUCCEEDED(rule->put_LocalPorts(Bstr(ports.c_str()))) &&
+         SUCCEEDED(rule->put_RemoteAddresses(Bstr(L"LocalSubnet"))) &&
+         SUCCEEDED(rule->put_Profiles(NET_FW_PROFILE2_PRIVATE)) &&
+         SUCCEEDED(rule->put_Direction(NET_FW_RULE_DIR_IN)) &&
+         SUCCEEDED(rule->put_Action(NET_FW_ACTION_ALLOW)) &&
+         SUCCEEDED(rule->put_EdgeTraversal(VARIANT_FALSE)) &&
+         SUCCEEDED(rule->put_Enabled(VARIANT_TRUE)) && SUCCEEDED(rules->Add(rule));
+      rule->Release();
+    }
+  }
+  if(rules) rules->Release();
+  if(policy) policy->Release();
+  if(SUCCEEDED(init)) CoUninitialize();
+  return ok;
 }
+}
+bool WinFirewallHelper::ConfigureOwnedRules(){return Apply(true);}
+bool WinFirewallHelper::RemoveOwnedRules(){return Apply(false);}

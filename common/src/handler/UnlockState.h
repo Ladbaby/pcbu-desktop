@@ -17,15 +17,7 @@ enum UnlockState {
   START_ERROR = 9,
   PORT_ERROR = 10,
   PROTOCOL_ERROR = 11,
-  CLOUD_SERVER_UNREACHABLE = 12,
-  CLOUD_PHONE_UNREACHABLE = 13,
-  CLOUD_RATE_LIMITED = 14,
-  CLOUD_PAIRING_GONE = 15,
-  CLOUD_DEVICE_STALE = 16,
-  CLOUD_NO_SUBSCRIPTION = 17,
-  CLOUD_SUBSCRIPTION_STALE = 18,
-  CLOUD_SUBSCRIPTION_ON_HOLD = 19,
-  CLOUD_SUBSCRIPTION_PAUSED = 20,
+  // Values 12-20 are reserved for removed legacy states.
   UNK_ERROR = 21,
 };
 
@@ -56,24 +48,6 @@ public:
       return I18n::Get("error_protocol_mismatch");
     } else if(state == UnlockState::UNK_ERROR) {
       return I18n::Get("unlock_error_unknown");
-    } else if(state == UnlockState::CLOUD_SERVER_UNREACHABLE) {
-      return I18n::Get("unlock_error_cloud_server_unreachable");
-    } else if(state == UnlockState::CLOUD_PHONE_UNREACHABLE) {
-      return I18n::Get("unlock_error_cloud_phone_unreachable");
-    } else if(state == UnlockState::CLOUD_RATE_LIMITED) {
-      return I18n::Get("unlock_error_cloud_rate_limited");
-    } else if(state == UnlockState::CLOUD_NO_SUBSCRIPTION) {
-      return I18n::Get("unlock_error_cloud_no_subscription");
-    } else if(state == UnlockState::CLOUD_PAIRING_GONE) {
-      return I18n::Get("unlock_error_cloud_pairing_gone");
-    } else if(state == UnlockState::CLOUD_SUBSCRIPTION_STALE) {
-      return I18n::Get("unlock_error_cloud_subscription_stale");
-    } else if(state == UnlockState::CLOUD_DEVICE_STALE) {
-      return I18n::Get("unlock_error_cloud_device_stale");
-    } else if(state == UnlockState::CLOUD_SUBSCRIPTION_ON_HOLD) {
-      return I18n::Get("unlock_error_cloud_subscription_on_hold");
-    } else if(state == UnlockState::CLOUD_SUBSCRIPTION_PAUSED) {
-      return I18n::Get("unlock_error_cloud_subscription_paused");
     } else {
       return I18n::Get("error_unknown");
     }
@@ -88,9 +62,7 @@ enum class UnlockPhase {
   STARTING,
   CLIENT_CONNECTING,
   SERVER_WAITING,
-  CLOUD_REQUESTING,
-  CLOUD_CONNECTING,
-  PHONE_UNLOCKING,
+  PHONE_UNLOCKING = 6,
 };
 
 class UnlockPhaseUtils {
@@ -102,10 +74,6 @@ public:
       return I18n::Get("wait_client_phone_connect");
     } else if(phase == UnlockPhase::SERVER_WAITING) {
       return I18n::Get("wait_server_phone_connect");
-    } else if(phase == UnlockPhase::CLOUD_REQUESTING) {
-      return I18n::Get("wait_cloud_request");
-    } else if(phase == UnlockPhase::CLOUD_CONNECTING) {
-      return I18n::Get("wait_cloud_connect");
     } else if(phase == UnlockPhase::PHONE_UNLOCKING) {
       return I18n::Get("wait_phone_unlock");
     }

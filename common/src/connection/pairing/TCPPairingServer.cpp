@@ -2,6 +2,8 @@
 
 #include "connection/stream/SocketStream.h"
 #include "storage/AppSettings.h"
+#include "platform/NetworkHelper.h"
+#include <boost/asio/ip/address_v4.hpp>
 #include "utils/I18n.h"
 
 #ifdef WINDOWS
@@ -38,6 +40,15 @@ void TCPPairingServer::AcceptThread() {
   struct sockaddr_in address{};
   socklen_t addrLen = sizeof(address);
   auto settings = AppSettings::Get();
+  const auto localAddress = NetworkHelper::GetSavedNetworkInterface().ipAddress;
+  boost::system::error_code addressError;
+  const auto selectedAddress = boost::asio::ip::make_address_v4(localAddress, addressError);
+  if(addressError || selectedAddress.is_unspecified()) {
+    spdlog::error("Configured network interface is unavailable; refusing wildcard listener.");
+    m_IsRunning = false;
+    ReportError(I18n::Get("error_pairing_server_init"));
+    return;
+  }
   auto clientSockets = std::vector<SOCKET>();
   auto clientThreads = std::vector<std::thread>();
   spdlog::info("Starting TCP pairing server...");
@@ -64,7 +75,7 @@ void TCPPairingServer::AcceptThread() {
   }
 
   address.sin_family = AF_INET;
-  address.sin_addr.s_addr = INADDR_ANY;
+  address.sin_addr.s_addr = htonl(selectedAddress.to_uint());
   address.sin_port = htons(settings.pairingServerPort);
   if(bind(m_ServerSocket, reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) < 0) {
     spdlog::error("bind() failed. (Code={})", SOCKET_LAST_ERROR);

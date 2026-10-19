@@ -22,6 +22,7 @@ if(WIN32)
             Wtsapi32
             Bthprops
             ole32
+            oleaut32
             Shell32
     )
     set(PLATFORM_SRC
@@ -31,6 +32,9 @@ if(WIN32)
             src/platform/BluetoothHelper.Win.cpp
             src/utils/RegistryUtils.cpp
             src/utils/RegistryUtils.h
+            src/shell/WindowsOperations.cpp
+            src/shell/WindowsOperations.h
+            ../desktop/src/installer/WinFirewallHelper.cpp
     )
 elseif(APPLE)
     add_compile_definitions(APPLE)
@@ -79,8 +83,6 @@ add_library(pcbu_common
         src/connection/stream/ConnectionStream.h
         src/connection/stream/SocketStream.cpp
         src/connection/stream/SocketStream.h
-        src/connection/stream/WebSocketStream.cpp
-        src/connection/stream/WebSocketStream.h
         src/connection/web/HttpClient.cpp
         src/connection/web/HttpClient.h
         src/connection/web/TlsContext.cpp
@@ -89,8 +91,6 @@ add_library(pcbu_common
         src/connection/pairing/PairingServer.h
         src/connection/pairing/TCPPairingServer.cpp
         src/connection/pairing/TCPPairingServer.h
-        src/connection/pairing/CloudPairingServer.cpp
-        src/connection/pairing/CloudPairingServer.h
         src/connection/pairing/UDPPairingBroadcaster.cpp
         src/connection/pairing/UDPPairingBroadcaster.h
         src/connection/pairing/PairingStructs.h
@@ -100,8 +100,6 @@ add_library(pcbu_common
         src/connection/unlock/UDPUnlockBroadcaster.h
         src/connection/unlock/clients/TCPUnlockClient.h
         src/connection/unlock/clients/TCPUnlockClient.cpp
-        src/connection/unlock/clients/CloudUnlockClient.h
-        src/connection/unlock/clients/CloudUnlockClient.cpp
         src/connection/unlock/clients/BTUnlockClient.h
         src/connection/unlock/servers/BTUnlockServer.h
         src/connection/unlock/servers/TCPUnlockServer.cpp

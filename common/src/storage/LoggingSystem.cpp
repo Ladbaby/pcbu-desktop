@@ -2,7 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
-#include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_sinks.h>
 #include <vector>
 
@@ -18,12 +18,6 @@ void LoggingSystem::Init(const std::string &logName, bool printToConsole, bool w
   if(writeToFile) {
     if(!std::filesystem::exists(logsDir))
       LocalShell::CreateDir(logsDir);
-    std::ifstream logFile(logPath, std::ifstream::ate | std::ifstream::binary);
-    if(logFile) {
-      auto sizeKb = logFile.tellg() / 1000;
-      if(sizeKb > 5000)
-        LocalShell::Remove(logPath);
-    }
   }
 
   try {
@@ -37,7 +31,7 @@ void LoggingSystem::Init(const std::string &logName, bool printToConsole, bool w
       sinks.push_back(consoleSink);
     }
     if(writeToFile) {
-      auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logPath.string(), false);
+      auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(logPath.string(), 1024 * 1024, 3, false);
       fileSink->set_level(logLevel);
       sinks.push_back(fileSink);
     }
@@ -48,8 +42,8 @@ void LoggingSystem::Init(const std::string &logName, bool printToConsole, bool w
     spdlog::set_default_logger(loggerPtr);
     spdlog::flush_on(logLevel);
     spdlog::info("Logger init.");
-  } catch(const std::exception &ex) {
-    spdlog::error("Error initializing logger: {}", ex.what());
+  } catch(const std::exception &) {
+    spdlog::error("Error initializing logger.");
   }
 }
 

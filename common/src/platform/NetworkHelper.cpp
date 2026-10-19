@@ -324,14 +324,16 @@ NetworkInterface NetworkHelper::GetSavedNetworkInterface() {
         break;
       }
     }
-    if(!found) {
+    if(!found && settings.serverMAC.empty()) {
       if(!localIfs.empty())
         result = localIfs[0];
-      else
-        spdlog::warn("Invalid server IP settings.");
     }
   } else {
-    result.ipAddress = settings.serverIP;
+    for(const auto &netIf : localIfs)
+      if(netIf.ipAddress == settings.serverIP) {
+        result = netIf;
+        break;
+      }
   }
   return result;
 }
@@ -351,7 +353,10 @@ std::vector<NetworkInterface> NetworkHelper::GetWakeOnLanInterfaces() {
 
 std::vector<BroadcastTarget> NetworkHelper::GetBroadcastTargets() {
   std::vector<BroadcastTarget> result{};
+  const auto selected = GetSavedNetworkInterface();
   for(const auto &netIf : GetLocalNetInterfaces()) {
+    if(netIf.ipAddress != selected.ipAddress)
+      continue;
     if(netIf.ipAddress.empty())
       continue;
     if(!std::regex_match(netIf.ipAddress, g_LocalIPv4Regex) && !netIf.ipAddress.starts_with("169.254."))

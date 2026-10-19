@@ -15,7 +15,7 @@ struct ShellCmdResult {
   std::string output{};
 };
 
-enum class ElevatorCommandType { NONE, RUN_CMD, READ_BYTES, WRITE_BYTES, CREATE_FILE, REMOVE, PROTECT_FILE };
+enum class ElevatorCommandType { NONE, RUN_CMD, READ_BYTES, WRITE_BYTES, CREATE_FILE, REMOVE, PROTECT_FILE, EXISTS, WRITE_ATOMIC, INSTALL_PROVIDER, REMOVE_PROVIDER, CONFIGURE_FIREWALL, REMOVE_FIREWALL, MIGRATE_STORAGE };
 
 struct ElevatorCommand {
   ElevatorCommandType type{};
@@ -28,10 +28,7 @@ struct ElevatorCommand {
   }
 
   [[nodiscard]] std::string ToString() const {
-    auto argsStr = nlohmann::json(args).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    if(dataBytes.empty())
-      return fmt::format("Type={}, Args={}", GetTypeName(type), argsStr);
-    return fmt::format("Type={}, Args={}, DataSize={}", GetTypeName(type), argsStr, dataBytes.size());
+    return fmt::format("Type={}, DataSize={}", GetTypeName(type), dataBytes.size());
   }
 
   static std::string GetTypeName(ElevatorCommandType type) {
@@ -63,7 +60,7 @@ struct ElevatorCommand {
       cmd.dataBytes = std::move(msg.blob);
       return cmd;
     } catch(const std::exception &ex) {
-      spdlog::error("Failed parsing elevator command. (Exception={}, Str={})", ex.what(), msg.json);
+      spdlog::error("Failed parsing elevator command.");
       return {};
     }
   }
@@ -113,7 +110,7 @@ struct ElevatorCommandResponse {
       resp.dataBytes = std::move(msg.blob);
       return resp;
     } catch(const std::exception &ex) {
-      spdlog::error("Failed parsing elevator response. (Exception={}, Str={})", ex.what(), msg.json);
+      spdlog::error("Failed parsing elevator response.");
       return {};
     }
   }
