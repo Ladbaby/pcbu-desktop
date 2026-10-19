@@ -110,7 +110,8 @@ std::vector<uint8_t> Shell::ReadBytes(const std::filesystem::path &path) {
     command.args = {path.string()};
 
     auto response = WindowsOperations::Execute(command);
-    return response.isError ? std::vector<uint8_t>{} : std::move(response.dataBytes);
+    if(response.isError) throw std::runtime_error(response.message);
+    return std::move(response.dataBytes);
 #else
     return LocalShell::ReadBytes(path);
 #endif
@@ -154,9 +155,39 @@ bool Shell::WindowsOperation(ElevatorCommandType type) {
 #endif
 }
 
+bool Shell::IsProviderInstalled() {
+#ifdef WINDOWS
+  auto elevator = GetElevator();
+  if(elevator) {
+    auto response = Exec(*elevator, ElevatorCommandType::IS_PROVIDER_INSTALLED, {});
+    if(!response) throw std::runtime_error("Provider status response timeout.");
+    return response->cmdResult.exitCode == 0;
+  }
+  ElevatorCommand command;
+  command.type=ElevatorCommandType::IS_PROVIDER_INSTALLED;
+  auto response=WindowsOperations::Execute(command);
+  if(response.isError) throw std::runtime_error(response.message);
+  return response.cmdResult.exitCode == 0;
+#else
+  return false;
+#endif
+}
+
 bool Shell::Exists(const std::filesystem::path &path) {
   auto elevator = GetElevator();
-  if(!elevator) return std::filesystem::exists(path);
+  if(!elevator) {
+#ifdef WINDOWS
+    if(LocalShell::IsRunningAsAdmin()) {
+      ElevatorCommand command;
+      command.type = ElevatorCommandType::EXISTS;
+      command.args = {path.string()};
+      auto response = WindowsOperations::Execute(command);
+      if(response.isError) throw std::runtime_error(response.message);
+      return response.cmdResult.exitCode == 0;
+    }
+#endif
+    return std::filesystem::exists(path);
+  }
   auto resp = Exec(*elevator, ElevatorCommandType::EXISTS, {path.string()});
   if(!resp) throw std::runtime_error("Cannot inspect storage through helper.");
   return resp->cmdResult.exitCode == 0;

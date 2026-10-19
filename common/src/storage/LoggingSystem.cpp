@@ -8,11 +8,19 @@
 
 #include "AppSettings.h"
 #include "shell/LocalShell.h"
+#include "shell/Shell.h"
 
 std::string LoggingSystem::g_LogName{};
 
 void LoggingSystem::Init(const std::string &logName, bool printToConsole, bool writeToFile) {
   g_LogName = logName;
+#ifdef WINDOWS
+  // Rotating sinks reopen/rename filenames and cannot retain the verified file handle.
+  // Until a handle-safe Windows sink exists, do not let elevated/LogonUI logging
+  // follow attacker-precreated directory entries or hard links. Console and IPC
+  // stage diagnostics remain available; unprivileged user logs still rotate.
+  if(LocalShell::IsRunningAsAdmin()) writeToFile = false;
+#endif
   auto logsDir = AppSettings::GetLogsDir(!LocalShell::IsRunningAsAdmin());
   auto logPath = logsDir / fmt::format("{}.log", g_LogName);
   if(writeToFile) {
@@ -21,7 +29,11 @@ void LoggingSystem::Init(const std::string &logName, bool printToConsole, bool w
   }
 
   try {
-    auto enableDebug = std::filesystem::exists(AppSettings::GetBaseDir() / "LOG_DEBUG");
+    bool enableDebug = false;
+    if(writeToFile || printToConsole) {
+      try { enableDebug = Shell::Exists(AppSettings::GetBaseDir() / "LOG_DEBUG"); }
+      catch(...) { /* Logging must not prevent startup or recovery. */ }
+    }
     auto logLevel = enableDebug ? spdlog::level::debug : spdlog::level::info;
 
     std::vector<spdlog::sink_ptr> sinks{};

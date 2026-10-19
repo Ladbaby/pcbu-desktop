@@ -15,7 +15,7 @@ struct ShellCmdResult {
   std::string output{};
 };
 
-enum class ElevatorCommandType { NONE, RUN_CMD, READ_BYTES, WRITE_BYTES, CREATE_FILE, REMOVE, PROTECT_FILE, EXISTS, WRITE_ATOMIC, INSTALL_PROVIDER, REMOVE_PROVIDER, CONFIGURE_FIREWALL, REMOVE_FIREWALL, MIGRATE_STORAGE };
+enum class ElevatorCommandType { NONE, RUN_CMD, READ_BYTES, WRITE_BYTES, CREATE_FILE, REMOVE, PROTECT_FILE, EXISTS, WRITE_ATOMIC, INSTALL_PROVIDER, REMOVE_PROVIDER, CONFIGURE_FIREWALL, REMOVE_FIREWALL, MIGRATE_STORAGE, IS_PROVIDER_INSTALLED };
 
 struct ElevatorCommand {
   ElevatorCommandType type{};
@@ -47,6 +47,14 @@ struct ElevatorCommand {
         return "REMOVE";
       case ElevatorCommandType::PROTECT_FILE:
         return "PROTECT_FILE";
+      case ElevatorCommandType::EXISTS: return "EXISTS";
+      case ElevatorCommandType::WRITE_ATOMIC: return "WRITE_ATOMIC";
+      case ElevatorCommandType::INSTALL_PROVIDER: return "INSTALL_PROVIDER";
+      case ElevatorCommandType::REMOVE_PROVIDER: return "REMOVE_PROVIDER";
+      case ElevatorCommandType::CONFIGURE_FIREWALL: return "CONFIGURE_FIREWALL";
+      case ElevatorCommandType::REMOVE_FIREWALL: return "REMOVE_FIREWALL";
+      case ElevatorCommandType::MIGRATE_STORAGE: return "MIGRATE_STORAGE";
+      case ElevatorCommandType::IS_PROVIDER_INSTALLED: return "IS_PROVIDER_INSTALLED";
     }
     return fmt::format("UNKNOWN({})", static_cast<int>(type));
   }

@@ -3,6 +3,7 @@
 #include <netfw.h>
 #include <filesystem>
 #include "storage/AppSettings.h"
+#include "shell/LocalShell.h"
 
 namespace {
 struct Bstr {
@@ -13,7 +14,8 @@ struct Bstr {
 };
 bool Apply(bool install) {
   const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-  if(FAILED(init) && init != RPC_E_CHANGED_MODE) return false;
+  if(FAILED(init) && init != RPC_E_CHANGED_MODE)
+    return LocalShell::FailOperation("firewall.com_init", static_cast<unsigned long>(init));
   INetFwPolicy2 *policy{};
   INetFwRules *rules{};
   bool ok = SUCCEEDED(CoCreateInstance(__uuidof(NetFwPolicy2),nullptr,CLSCTX_INPROC_SERVER,__uuidof(INetFwPolicy2),reinterpret_cast<void **>(&policy)));
@@ -62,6 +64,8 @@ bool Apply(bool install) {
   if(rules) rules->Release();
   if(policy) policy->Release();
   if(SUCCEEDED(init)) CoUninitialize();
+  if(!ok && LocalShell::GetOperationError().empty())
+    LocalShell::FailOperation(install ? "firewall.configure" : "firewall.remove", ERROR_GEN_FAILURE);
   return ok;
 }
 }

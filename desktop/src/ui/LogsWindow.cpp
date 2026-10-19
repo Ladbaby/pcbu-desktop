@@ -16,9 +16,17 @@ void LogsWindow::LoadLogs(QObject *window) {
     m_LoadThread.join();
   m_LoadThread = std::thread([window]() {
     spdlog::default_logger()->flush();
-    auto desktopLogs = LocalShell::ReadBytes(AppSettings::GetLogsDir(!LocalShell::IsRunningAsAdmin()) / "desktop.log");
-    auto moduleLogs = Shell::ReadBytes(AppSettings::GetLogsDir(false) / "module.log");
-    auto elevatorLogs = Shell::ReadBytes(AppSettings::GetLogsDir(false) / "elevator.log");
+    const auto readLogs = [](const std::filesystem::path &path, bool privileged) {
+      try {
+        return privileged ? Shell::ReadBytes(path) : LocalShell::ReadBytes(path);
+      } catch(...) {
+        const std::string message = "Logs unavailable: protected read failed.\n";
+        return std::vector<uint8_t>(message.begin(), message.end());
+      }
+    };
+    auto desktopLogs = readLogs(AppSettings::GetLogsDir(!LocalShell::IsRunningAsAdmin()) / "desktop.log", LocalShell::IsRunningAsAdmin());
+    auto moduleLogs = readLogs(AppSettings::GetLogsDir(false) / "module.log", true);
+    auto elevatorLogs = readLogs(AppSettings::GetLogsDir(false) / "elevator.log", true);
     std::vector<uint8_t> macAgentLogs{};
 #ifdef APPLE
     macAgentLogs = LocalShell::ReadBytes(AppSettings::GetLogsDir(true) / "mac_agent.log");

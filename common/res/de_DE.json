@@ -1,5 +1,7 @@
 {
   "product_name": "PulseUnlock",
+  "provider_setup_hint": "Das Windows-Setup installiert nur die Anwendung. Klicken Sie hier auf Installieren, um die Android-Anmeldung zu aktivieren. Gespeicherte Geräte bedeuten nicht, dass das Anmeldemodul installiert ist.",
+  "provider_status_unverified": "Handlungsbedarf: Der Modulstatus konnte nicht geprüft werden. Versuchen Sie die Einrichtung mit Neu installieren erneut; vorhandene Daten bleiben erhalten.",
   "initializing": "Initialisiere...",
   "password": "Passwort",
   "retry": "Erneut versuchen",

@@ -15,6 +15,7 @@ public:
   ~MainWindow() override;
 
   Q_INVOKABLE bool IsInstalled();
+  Q_INVOKABLE QString GetInstallationError();
   Q_INVOKABLE bool IsPaired();
   Q_INVOKABLE QString GetInstalledVersion();
   Q_INVOKABLE QString GetLicenseText();

@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include "LocalShell.h"
+#include "WindowsProvider.h"
 #include "platform/PlatformHelper.h"
 #include "storage/AppSettings.h"
 #include "utils/StringUtils.h"
@@ -43,61 +44,11 @@ bool StoragePath(const std::filesystem::path &p, bool directory = false, bool lo
   }
   return false;
 }
-bool SetValue(const std::wstring &key, const wchar_t *name, const std::wstring &value) {
-  HKEY h{};
-  auto status = RegCreateKeyExW(HKEY_LOCAL_MACHINE, key.c_str(), 0, nullptr, 0, KEY_SET_VALUE | KEY_WOW64_64KEY, nullptr, &h, nullptr);
-  if(status != ERROR_SUCCESS) return LocalShell::FailOperation("provider.registry_open", status);
-  status = RegSetValueExW(h, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value.c_str()), static_cast<DWORD>((value.size()+1)*sizeof(wchar_t)));
-  RegCloseKey(h);
-  return status == ERROR_SUCCESS || LocalShell::FailOperation("provider.registry_write", status);
+bool Provider(bool install) { return install ? WindowsProvider::Install() : WindowsProvider::Remove(); }
+
 }
-std::filesystem::path SystemDir() {
-  wchar_t dir[MAX_PATH]{};
-  if(!GetSystemDirectoryW(dir, MAX_PATH)) throw std::runtime_error("System directory unavailable.");
-  return dir;
-}
-bool Provider(bool install) {
-  const auto cls = L"SOFTWARE\\Classes\\CLSID\\" + Guid;
-  const auto registration = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\" + Guid;
-  auto target = SystemDir() / "win_pulseunlock.dll";
-  if(!SafePath(target)) return false;
-  if(!install) {
-    for(const auto &key : {registration, cls}) {
-      const auto result = RegDeleteTreeW(HKEY_LOCAL_MACHINE, key.c_str());
-      if(result != ERROR_SUCCESS && result != ERROR_FILE_NOT_FOUND) return false;
-    }
-    for(const auto &name : {"win_pulseunlock.dll", "win-pcbiounlock.dll"}) {
-      auto file = SystemDir() / name;
-      if(!SafePath(file)) return false;
-      if(!DeleteFileW(file.c_str()) && GetLastError() != ERROR_FILE_NOT_FOUND) return false;
-    }
-    return true;
-  }
-  // Install only the provider embedded at build time, never caller-supplied bytes or paths.
-  auto resource = FindResourceW(nullptr, MAKEINTRESOURCEW(101), MAKEINTRESOURCEW(10));
-  if(!resource) return LocalShell::FailOperation("provider.resource", GetLastError());
-  auto data = LoadResource(nullptr, resource);
-  const auto size = SizeofResource(nullptr, resource);
-  auto bytes = static_cast<const uint8_t *>(LockResource(data));
-  if(!bytes || !size) return LocalShell::FailOperation("provider.resource_data", ERROR_RESOURCE_DATA_NOT_FOUND);
-  const auto suffix = StringUtils::RandomString(24, false);
-  if(suffix.empty()) return LocalShell::FailOperation("provider.random", ERROR_GEN_FAILURE);
-  auto temporary = SystemDir() / (".pcbu-provider-" + suffix + ".tmp");
-  HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if(file == INVALID_HANDLE_VALUE) return LocalShell::FailOperation("provider.create", GetLastError());
-  DWORD written{};
-  bool ok = WriteFile(file, bytes, size, &written, nullptr) != FALSE;
-  if(!ok) LocalShell::FailOperation("provider.write", GetLastError());
-  if(ok && written != size) ok = LocalShell::FailOperation("provider.short_write", ERROR_WRITE_FAULT);
-  if(ok && !FlushFileBuffers(file)) ok = LocalShell::FailOperation("provider.flush", GetLastError());
-  CloseHandle(file);
-  if(ok && !MoveFileExW(temporary.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-    ok = LocalShell::FailOperation("provider.replace", GetLastError());
-  if(!ok) { DeleteFileW(temporary.c_str()); return false; }
-  return SetValue(registration, nullptr, L"win_pulseunlock") && SetValue(cls, nullptr, L"win_pulseunlock") &&
-         SetValue(cls + L"\\InprocServer32", nullptr, target.wstring()) && SetValue(cls + L"\\InprocServer32", L"ThreadingModel", L"Apartment");
-}
-}
+
+bool WindowsOperations::IsProviderInstalled() { return WindowsProvider::IsInstalled(); }
 
 bool WindowsOperations::ValidateCommand(const ElevatorCommand &c) {
   if(c.dataBytes.size() > 4*1024*1024) return false;
@@ -107,6 +58,7 @@ bool WindowsOperations::ValidateCommand(const ElevatorCommand &c) {
     case ElevatorCommandType::CONFIGURE_FIREWALL:
     case ElevatorCommandType::REMOVE_FIREWALL:
     case ElevatorCommandType::MIGRATE_STORAGE:
+    case ElevatorCommandType::IS_PROVIDER_INSTALLED:
       return c.args.empty() && c.dataBytes.empty();
     case ElevatorCommandType::READ_BYTES:
       return c.args.size()==1 && c.dataBytes.empty() && StoragePath(c.args[0], false, true);
@@ -134,11 +86,18 @@ ElevatorCommandResponse WindowsOperations::Execute(const ElevatorCommand &c) {
   try {
     if(!LocalShell::IsRunningAsAdmin() || !ValidateCommand(c)) return ElevatorCommandResponse(true,"Operation denied.");
     switch(c.type) {
+      case ElevatorCommandType::IS_PROVIDER_INSTALLED: {
+        const bool installed=IsProviderInstalled();
+        if(!LocalShell::GetOperationError().empty()) return response(false);
+        return ElevatorCommandResponse(ShellCmdResult{installed ? 0 : 1, {}});
+      }
       case ElevatorCommandType::INSTALL_PROVIDER: return response(Provider(true));
       case ElevatorCommandType::REMOVE_PROVIDER: return response(Provider(false));
       case ElevatorCommandType::CONFIGURE_FIREWALL: return response(WinFirewallHelper::ConfigureOwnedRules());
       case ElevatorCommandType::REMOVE_FIREWALL: return response(WinFirewallHelper::RemoveOwnedRules());
-      case ElevatorCommandType::MIGRATE_STORAGE:
+      case ElevatorCommandType::MIGRATE_STORAGE: {
+        LocalShell::StoragePathGuard guard(Root(true));
+        if(!guard.IsValid()) return response(LocalShell::FailOperation("migration.ancestry", ERROR_ACCESS_DENIED));
         // Keep legacy records in place rather than expose credentials during a directory move.
         if(!std::filesystem::is_directory(Root(true)) || !LocalShell::ProtectFile(Root(true), true)) return response(false);
         for(const auto &name : {"app_settings.json", "paired_devices.json", "LOG_DEBUG"}) {
@@ -146,8 +105,15 @@ ElevatorCommandResponse WindowsOperations::Execute(const ElevatorCommand &c) {
           if(std::filesystem::exists(path) && (!SafePath(path) || !LocalShell::ProtectFile(path,true))) return response(false);
         }
         return response(true);
-      case ElevatorCommandType::EXISTS: return ElevatorCommandResponse(ShellCmdResult{std::filesystem::exists(c.args[0])?0:1,{}});
+      }
+      case ElevatorCommandType::EXISTS: {
+        LocalShell::StoragePathGuard guard(c.args[0]);
+        if(!guard.IsValid()) return response(LocalShell::FailOperation("exists.ancestry", ERROR_ACCESS_DENIED));
+        return ElevatorCommandResponse(ShellCmdResult{std::filesystem::exists(c.args[0])?0:1,{}});
+      }
       case ElevatorCommandType::READ_BYTES: {
+        LocalShell::StoragePathGuard guard(c.args[0]);
+        if(!guard.IsValid()) return response(LocalShell::FailOperation("read.ancestry", ERROR_ACCESS_DENIED));
         if(!LocalShell::ProtectFile(std::filesystem::path(c.args[0]).parent_path(),true)) return response(false);
         if(std::filesystem::file_size(c.args[0]) > IPCHelper::MAX_BLOB_SIZE) return response(false);
         if(StoragePath(c.args[0]) && !LocalShell::ProtectFile(c.args[0],true)) return response(false);
@@ -155,7 +121,25 @@ ElevatorCommandResponse WindowsOperations::Execute(const ElevatorCommand &c) {
       }
       case ElevatorCommandType::WRITE_ATOMIC: return response(LocalShell::WriteBytesAtomic(c.args[0], c.dataBytes));
       case ElevatorCommandType::CREATE_FILE: return response(c.args[1]=="true" ? LocalShell::CreateDir(c.args[0]) && LocalShell::ProtectFile(c.args[0],true) : LocalShell::WriteBytesAtomic(c.args[0],{}));
-      case ElevatorCommandType::REMOVE: return response(LocalShell::Remove(c.args[0]));
+      case ElevatorCommandType::REMOVE: {
+        const std::filesystem::path path(c.args[0]);
+        LocalShell::StoragePathGuard guard(path.parent_path());
+        if(!guard.IsValid() || !LocalShell::ProtectFile(path.parent_path(),true)) return response(false);
+        HANDLE file=CreateFileW(path.c_str(), DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ, nullptr,
+                               OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if(file==INVALID_HANDLE_VALUE) {
+          const auto error=GetLastError();
+          return response(error==ERROR_FILE_NOT_FOUND || LocalShell::FailOperation("remove.open",error));
+        }
+        BY_HANDLE_FILE_INFORMATION info{};
+        bool ok=GetFileInformationByHandle(file,&info) && info.nNumberOfLinks==1 &&
+                !(info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY));
+        FILE_DISPOSITION_INFO disposition{TRUE};
+        if(ok) ok=SetFileInformationByHandle(file,FileDispositionInfo,&disposition,sizeof(disposition))!=FALSE;
+        const auto error=GetLastError();
+        CloseHandle(file);
+        return response(ok || LocalShell::FailOperation("remove.identity",error ? error : ERROR_ACCESS_DENIED));
+      }
       case ElevatorCommandType::PROTECT_FILE: return response(LocalShell::ProtectFile(c.args[0],true));
       default: return response(false);
     }

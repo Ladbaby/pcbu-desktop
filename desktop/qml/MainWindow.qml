@@ -34,7 +34,7 @@ ApplicationWindow {
                 id: viewLoader
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                source: "qrc:/ui/forms/MainForm.qml"
+                source: window.hasInitialized ? "qrc:/ui/forms/MainForm.qml" : ""
             }
         }
     }

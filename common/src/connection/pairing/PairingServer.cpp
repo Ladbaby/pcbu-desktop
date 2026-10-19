@@ -1,7 +1,6 @@
 #include "PairingServer.h"
 
 #include "platform/NetworkHelper.h"
-#include "platform/PlatformHelper.h"
 #include "storage/AppSettings.h"
 #include "storage/PairedDevicesStorage.h"
 #include "storage/PairingMethod.h"
@@ -98,12 +97,6 @@ void PairingServer::HandleClient(ConnectionStream &stream) {
       if(!PairedDevicesStorage::AddDevice(device))
         throw std::runtime_error("Cannot persist paired device.");
       spdlog::info("Successfully paired device. (ID={}, Method={})", device.id, PairingMethodUtils::ToString(device.pairingMethod));
-#ifdef WINDOWS
-      if(PlatformHelper::SetDefaultCredProv(m_UIData.userName, "{74A23DE2-B81D-46EC-E129-CD32507ED716}"))
-        spdlog::info("Successfully changed default credential provider for user '{}'.", m_UIData.userName);
-      else
-        spdlog::error("Failed setting default credential provider for user '{}'.", m_UIData.userName);
-#endif
       ReportSuccess();
     } else {
       ReportError(I18n::Get("error_pairing_failed"));

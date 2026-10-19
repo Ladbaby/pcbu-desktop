@@ -1,5 +1,7 @@
 {
   "product_name": "PulseUnlock",
+  "provider_setup_hint": "O instalador do Windows instala apenas a aplicação. Clique aqui em Instalar para ativar o início de sessão pelo Android. Os dispositivos guardados não significam que o módulo de início de sessão está instalado.",
+  "provider_status_unverified": "Atenção: não foi possível verificar o estado do módulo. Use Reinstalar para tentar novamente; os registos existentes serão preservados.",
   "initializing": "A iniciar...",
   "password": "Palavra-passe",
   "retry": "Tentar novamente",

@@ -120,7 +120,7 @@ PCBUAppStorage AppSettings::LoadDefaults() {
 
   def.unlockBehavior = "key_press_lock_only";
   def.winHidePasswordField = false;
-  def.winForceDefaultCredProv = true;
+  def.winForceDefaultCredProv = false;
 #ifdef APPLE
   def.unixSetPasswordPAM = true;
 #else

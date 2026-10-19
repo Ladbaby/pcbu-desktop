@@ -1,5 +1,7 @@
 {
   "product_name": "PulseUnlock",
+  "provider_setup_hint": "Windows setup installs the application only. Click Install here to enable Android sign-in. Saved devices do not mean the sign-in module is installed.",
+  "provider_status_unverified": "Needs attention: module status could not be verified. Use Reinstall to retry setup; existing records are preserved.",
   "initializing": "Initializing...",
   "password": "Password",
   "retry": "Retry",

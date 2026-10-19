@@ -14,6 +14,7 @@ if(WIN32)
     add_compile_definitions(WINDOWS _WIN32_WINNT=0x0A00)
     set(PLATFORM_LIBS
             crypt32
+            bcrypt
             Ws2_32
             Advapi32
             Iphlpapi
@@ -34,6 +35,8 @@ if(WIN32)
             src/utils/RegistryUtils.h
             src/shell/WindowsOperations.cpp
             src/shell/WindowsOperations.h
+            src/shell/WindowsProvider.cpp
+            src/shell/WindowsProvider.h
             ../desktop/src/installer/WinFirewallHelper.cpp
     )
 elseif(APPLE)

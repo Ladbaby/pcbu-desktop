@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <stdexcept>
@@ -105,6 +106,28 @@ int ElevatorApp::Run(int argc, char *argv[]) {
 }
 
 int ElevatorApp::RunMain(int argc, char *argv[]) {
+#ifdef WINDOWS
+  if(argc == 2 && std::string(argv[1]) == "--uninstall-system") {
+    const auto runCleanupStage = [](ElevatorCommandType type, const char *stage) {
+      try {
+        auto response = WindowsOperations::Execute(ElevatorCommand{type});
+        if(!response.isError)
+          return true;
+        std::fprintf(stderr, "System cleanup failed at %s: %s\n", stage, response.message.c_str());
+      } catch(const std::exception &ex) {
+        std::fprintf(stderr, "System cleanup failed at %s: %s\n", stage, ex.what());
+      } catch(...) {
+        std::fprintf(stderr, "System cleanup failed at %s: unknown error\n", stage);
+      }
+      return false;
+    };
+    if(!runCleanupStage(ElevatorCommandType::REMOVE_PROVIDER, "REMOVE_PROVIDER"))
+      return 1;
+    if(!runCleanupStage(ElevatorCommandType::REMOVE_FIREWALL, "REMOVE_FIREWALL"))
+      return 1;
+    return 0;
+  }
+#endif
   if(argc != 3) {
     spdlog::error("Invalid args.");
     return 1;

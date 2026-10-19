@@ -13,11 +13,28 @@ Form {
         GroupBox {
             title: QI18n.Get('service_module')
             Layout.preferredWidth: parent.width / 3.5
-            Layout.preferredHeight: parent.height / 1.6
-            ColumnLayout {
+            Layout.preferredHeight: parent.height / 1.45
+            property string probeError: MainWindow.GetInstallationError()
+            property bool moduleInstalled: probeError.length === 0 && MainWindow.IsInstalled()
+            id: servicePanel
+            ScrollView {
+                id: serviceScroll
                 anchors.fill: parent
+                contentWidth: availableWidth
+                clip: true
+                ColumnLayout {
+                width: serviceScroll.availableWidth
                 Label {
-                    text: '%1: %2'.arg(QI18n.Get('status')).arg(MainWindow.IsInstalled() ? QI18n.Get('installed') : QI18n.Get('not_installed'))
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    text: servicePanel.probeError.length > 0 ? QI18n.Get('provider_status_unverified') :
+                          '%1: %2'.arg(QI18n.Get('status')).arg(servicePanel.moduleInstalled ? QI18n.Get('installed') : QI18n.Get('not_installed'))
+                }
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WrapAnywhere
+                    visible: servicePanel.probeError.length > 0
+                    text: servicePanel.probeError
                 }
                 Label {
                     text: '%1: %2'.arg(QI18n.Get('installed_version')).arg(MainWindow.GetInstalledVersion())
@@ -25,22 +42,24 @@ Form {
                 Button {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    text: MainWindow.IsInstalled() ? QI18n.Get('uninstall') : QI18n.Get('install')
+                    text: servicePanel.moduleInstalled ? QI18n.Get('uninstall') : QI18n.Get('install')
+                    enabled: servicePanel.probeError.length === 0
                     onClicked: MainWindow.OnInstallClicked(window)
                 }
                 Button {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     text: QI18n.Get('reinstall')
-                    enabled: MainWindow.IsInstalled()
+                    enabled: servicePanel.moduleInstalled || servicePanel.probeError.length > 0
                     onClicked: MainWindow.OnReinstallClicked(window)
                 }
                 Button {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     text: QI18n.Get('settings')
-                    enabled: MainWindow.IsInstalled()
+                    enabled: servicePanel.moduleInstalled
                     onClicked: SettingsForm.Show(viewLoader)
+                }
                 }
             }
         }
@@ -99,7 +118,7 @@ Form {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 60
                         text: QI18n.Get('pair_device')
-                        enabled: MainWindow.IsInstalled()
+                        enabled: servicePanel.moduleInstalled
                         onClicked: PairingForm.Show(viewLoader, window)
                     }
                     Button {

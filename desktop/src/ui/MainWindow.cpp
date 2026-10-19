@@ -20,7 +20,23 @@ MainWindow::~MainWindow() {
 }
 
 bool MainWindow::IsInstalled() {
-  return ServiceInstaller::IsInstalled();
+  try {
+    return ServiceInstaller::IsInstalled();
+  } catch(...) {
+    // QML property evaluation must not let a failed helper response terminate the UI.
+    return false;
+  }
+}
+
+QString MainWindow::GetInstallationError() {
+  try {
+    ServiceInstaller::IsInstalled();
+    return {};
+  } catch(const std::exception &ex) {
+    return QString::fromUtf8(ex.what());
+  } catch(...) {
+    return QStringLiteral("Provider status unavailable.");
+  }
 }
 
 bool MainWindow::IsPaired() {
@@ -127,14 +143,25 @@ void MainWindow::PerformStartupChecks(QObject *window) {
       finish(false, false);
       return;
     }
-    auto settings = AppSettings::Get();
-    if(PairedDevicesStorage::ConsumeRemovedCloudCount() > 0)
-      QMetaObject::invokeMethod(window, "showInfoMessage", Q_ARG(QVariant, QStringLiteral("Legacy cloud pairings were removed. Pair those phones again using a local connection.")));
+    try {
+      auto settings = AppSettings::Get();
+      if(PairedDevicesStorage::ConsumeRemovedCloudCount() > 0)
+        QMetaObject::invokeMethod(window, "showInfoMessage", Q_ARG(QVariant, QStringLiteral("Legacy cloud pairings were removed. Pair those phones again using a local connection.")));
 
-    const auto installedVersion = settings.installedVersion;
-    auto needsReinstall =
-        ServiceInstaller::IsInstalled() && (AppInfo::CompareVersion(installedVersion, AppInfo::GetVersion()) == 1 || installedVersion.empty());
-    finish(true, needsReinstall);
+      const auto installedVersion = settings.installedVersion;
+      bool needsReinstall=false;
+      try {
+        needsReinstall=ServiceInstaller::IsInstalled() &&
+            (AppInfo::CompareVersion(installedVersion,AppInfo::GetVersion())==1 || installedVersion.empty());
+      } catch(const std::exception &ex) {
+        // Let the main form expose diagnostics and a repair action.
+        spdlog::warn("Provider status could not be verified: {}",ex.what());
+      }
+      finish(true, needsReinstall);
+    } catch(...) {
+      QMetaObject::invokeMethod(window, "showFatalErrorMessage", Q_ARG(QVariant, QStringLiteral("Cannot verify protected installation state. Original records were preserved; repair is required.")));
+      finish(false, false);
+    }
   });
 }
 
@@ -186,7 +213,7 @@ void MainWindow::OnInstallClicked(QObject *window) {
       QMetaObject::invokeMethod(window, "finishLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("success"))));
     } catch(const std::exception &ex) {
       logCallback(ex.what());
-      logCallback("Installation may be partial. Completed provider/firewall changes were not rolled back.");
+      logCallback("Setup did not finish. Provider recovery may have restored its prior state; firewall or settings changes may remain. Retry repair before using this provider for sign-in.");
       QMetaObject::invokeMethod(window, "finishLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("error"))));
     }
   });
@@ -229,7 +256,7 @@ void MainWindow::OnReinstallClicked(QObject *window) {
       QMetaObject::invokeMethod(window, "finishLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("success"))));
     } catch(const std::exception &ex) {
       logCallback(ex.what());
-      logCallback("Installation may be partial. Completed provider/firewall changes were not rolled back.");
+      logCallback("Setup did not finish. Provider recovery may have restored its prior state; firewall or settings changes may remain. Retry repair before using this provider for sign-in.");
       QMetaObject::invokeMethod(window, "finishLoadingScreen", Q_ARG(QVariant, QString::fromUtf8(I18n::Get("error"))));
     }
   });

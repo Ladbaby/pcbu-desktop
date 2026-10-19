@@ -5,28 +5,15 @@
 #include <ShlObj.h>
 
 #include "WinFirewallHelper.h"
-#include "platform/PlatformHelper.h"
 #include "shell/Shell.h"
 #include "storage/AppSettings.h"
-#include "storage/PairedDevicesStorage.h"
 #include "utils/ResourceHelper.h"
 #include "utils/StringUtils.h"
 
-#define LIB_MODULE_FILE "win_pulseunlock.dll"
-#define LIB_MODULE_FILE_OLD "win-pcbiounlock.dll"
-#define CRED_PROVIDER_NAME "win_pulseunlock"
-#define CRED_PROVIDER_GUID "{74A23DE2-B81D-46EC-E129-CD32507ED716}"
 #define APP_FIREWALL_RULE_NAME "PulseUnlock"
 #define APP_FIREWALL_RULE_NAME_OLD "PC Bio Unlock"
 #define LOGONUI_FIREWALL_RULE_NAME "LogonUI (PulseUnlock)"
 #define LOGONUI_FIREWALL_RULE_NAME_OLD "LogonUI (PC Bio Unlock)"
-
-std::filesystem::path ServiceInstaller_GetSysDir() {
-  wchar_t sysDir[MAX_PATH]{};
-  if(GetSystemDirectoryW(sysDir, MAX_PATH) > 0)
-    return sysDir;
-  return "C:\\Windows\\System32";
-}
 
 ServiceInstaller::ServiceInstaller(const std::function<void(const std::string &)> &logCallback) {
   m_Logger = logCallback;
@@ -46,7 +33,7 @@ std::vector<ServiceSetting> ServiceInstaller::GetSettings() {
        AppSettings::Get().unlockBehavior,
        "key_press_lock_only"},
       {"hidePasswordField", I18n::Get("service_setting_hide_pw_field"), AppSettings::Get().winHidePasswordField, false},
-      {"forceCredProv", I18n::Get("service_setting_force_cred_prov"), AppSettings::Get().winForceDefaultCredProv, true},
+      {"forceCredProv", I18n::Get("service_setting_force_cred_prov"), AppSettings::Get().winForceDefaultCredProv, false},
   };
 }
 
@@ -71,8 +58,7 @@ void ServiceInstaller::ApplySettings(const std::vector<ServiceSetting> &settings
 }
 
 bool ServiceInstaller::IsInstalled() {
-  auto sysDir = ServiceInstaller_GetSysDir();
-  return std::filesystem::exists(sysDir / LIB_MODULE_FILE) || std::filesystem::exists(sysDir / LIB_MODULE_FILE_OLD);
+  return Shell::IsProviderInstalled();
 }
 
 void ServiceInstaller::Install() {
@@ -81,12 +67,6 @@ void ServiceInstaller::Install() {
     throw std::runtime_error("Cannot install credential provider.");
   if(!Shell::WindowsOperation(ElevatorCommandType::CONFIGURE_FIREWALL))
     throw std::runtime_error("Cannot configure local-only firewall rules.");
-
-  m_Logger("Setting default credential provider...");
-  for(auto device : PairedDevicesStorage::GetDevices()) {
-    if(!PlatformHelper::SetDefaultCredProv(device.userName, CRED_PROVIDER_GUID))
-      m_Logger(fmt::format("Failed setting default credential provider for user '{}'.", device.userName));
-  }
   m_Logger("Provider and firewall stages completed; settings still need to be saved.");
 }
 

@@ -5,5 +5,6 @@
 namespace WindowsOperations {
 bool ValidateCommand(const ElevatorCommand &command);
 ElevatorCommandResponse Execute(const ElevatorCommand &command);
+bool IsProviderInstalled();
 }
 #endif

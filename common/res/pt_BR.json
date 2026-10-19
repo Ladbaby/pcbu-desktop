@@ -1,5 +1,7 @@
 {
   "product_name": "PulseUnlock",
+  "provider_setup_hint": "O instalador do Windows instala apenas o aplicativo. Clique em Instalar aqui para ativar o login pelo Android. Dispositivos salvos não significam que o módulo de login está instalado.",
+  "provider_status_unverified": "Atenção: não foi possível verificar o estado do módulo. Use Reinstalar para tentar novamente; os registros existentes serão preservados.",
   "initializing": "Inicializando...",
   "password": "Senha",
   "retry": "Tentar novamente",

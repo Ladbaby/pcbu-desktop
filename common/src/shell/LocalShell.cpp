@@ -139,6 +139,8 @@ bool LocalShell::CreateDir(const std::filesystem::path &path) {
     boost::filesystem::create_directories(boost::filesystem::path(path), ec);
     return !ec.failed();
   }
+  LocalShell::StoragePathGuard rootGuard(path);
+  if(!rootGuard.IsValid()) return FailOperation("directory.ancestry", ERROR_REPARSE_TAG_INVALID);
   // Never recreate an unreadable existing directory.
   if(std::filesystem::exists(path))
     return std::filesystem::is_directory(path) && ProtectFile(path, true);
@@ -224,18 +226,6 @@ public:
     }
   }
 };
-bool NoReparsePoints(const std::filesystem::path &path) {
-  auto current = std::filesystem::absolute(path).lexically_normal();
-  while(!current.empty()) {
-    const DWORD attributes = GetFileAttributesW(current.c_str());
-    if(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
-      return false;
-    if(current == current.root_path())
-      break;
-    current = current.parent_path();
-  }
-  return true;
-}
 struct StorageSecurity {
   PSECURITY_DESCRIPTOR descriptor{};
   SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, FALSE};
@@ -247,13 +237,50 @@ struct StorageSecurity {
   ~StorageSecurity() { if(descriptor) LocalFree(descriptor); }
 };
 }
+LocalShell::StoragePathGuard::StoragePathGuard(const std::filesystem::path &path) {
+  const auto absolute = std::filesystem::absolute(path).lexically_normal();
+  if(absolute.empty() || !absolute.is_absolute()) return;
+  std::vector<std::filesystem::path> components;
+  for(auto current = absolute; !current.empty();) {
+    components.push_back(current);
+    if(current == current.root_path()) break;
+    current = current.parent_path();
+  }
+  std::reverse(components.begin(), components.end());
+  for(size_t i = 0; i < components.size(); ++i) {
+    const bool leaf = i + 1 == components.size();
+    HANDLE handle = CreateFileW(components[i].c_str(), FILE_READ_ATTRIBUTES,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if(handle == INVALID_HANDLE_VALUE) {
+      const auto error = GetLastError();
+      if(error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+        // The deepest existing ancestor remains pinned; the requested descendant
+        // cannot be opened yet. Creation/protection must acquire a fresh guard.
+        valid = !handles.empty();
+        return;
+      }
+      return;
+    }
+    BY_HANDLE_FILE_INFORMATION info{};
+    if(!GetFileInformationByHandle(handle, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+       (!leaf && !(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) ||
+       ((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 && info.nNumberOfLinks != 1)) {
+      CloseHandle(handle);
+      return;
+    }
+    handles.push_back(handle);
+  }
+  valid = !handles.empty();
+}
+LocalShell::StoragePathGuard::~StoragePathGuard() { for(auto handle : handles) CloseHandle(handle); }
 #endif
 
 bool LocalShell::ProtectFile(const std::filesystem::path &path, bool enabled) {
 #ifdef WINDOWS
-  // Protection can no longer be disabled, including by legacy callers.
-  if(!NoReparsePoints(path))
-    return FailOperation("acl.reparse", ERROR_REPARSE_TAG_INVALID);
+  LocalShell::StoragePathGuard guard(path);
+  if(!guard.IsValid())
+    return FailOperation("acl.ancestry", ERROR_REPARSE_TAG_INVALID);
   ScopedStoragePrivileges privileges;
   HANDLE handle = CreateFileW(path.c_str(), READ_CONTROL | WRITE_DAC | WRITE_OWNER,
                               FILE_SHARE_READ, nullptr, OPEN_EXISTING,
@@ -333,8 +360,9 @@ bool LocalShell::WriteBytesAtomic(const std::filesystem::path &path, const std::
     return false;
   const auto temporary = parent / (".pcbu-" + random + ".tmp");
 #ifdef WINDOWS
-  if(!NoReparsePoints(path))
-    return FailOperation("acl.reparse", ERROR_REPARSE_TAG_INVALID);
+  LocalShell::StoragePathGuard guard(parent);
+  if(!guard.IsValid())
+    return FailOperation("atomic.ancestry", ERROR_REPARSE_TAG_INVALID);
   if(std::filesystem::exists(path) && !ProtectFile(path, true))
     return false;
   StorageSecurity security;

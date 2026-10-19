@@ -37,6 +37,7 @@ public:
 
   static bool ProtectFile(const std::filesystem::path &path, bool enabled);
   static bool WindowsOperation(ElevatorCommandType type);
+  static bool IsProviderInstalled();
   static bool Exists(const std::filesystem::path &path);
   static bool WriteBytesAtomic(const std::filesystem::path &path, const std::vector<uint8_t> &data);
 

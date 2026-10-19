@@ -2,6 +2,9 @@
 #define LOCALSHELL_H
 
 #include <filesystem>
+#ifdef WINDOWS
+#include <vector>
+#endif
 
 #include "ElevatorCommands.h"
 
@@ -11,6 +14,19 @@
 
 class LocalShell {
 public:
+#ifdef WINDOWS
+  // Pins existing directory ancestors (without delete sharing) for the lifetime of a storage operation.
+  class StoragePathGuard {
+    std::vector<void *> handles;
+    bool valid{};
+  public:
+    explicit StoragePathGuard(const std::filesystem::path &path);
+    ~StoragePathGuard();
+    StoragePathGuard(const StoragePathGuard &) = delete;
+    StoragePathGuard &operator=(const StoragePathGuard &) = delete;
+    bool IsValid() const { return valid; }
+  };
+#endif
   static bool IsRunningAsAdmin();
 
   static ShellCmdResult RunCommand(const std::string &cmd);

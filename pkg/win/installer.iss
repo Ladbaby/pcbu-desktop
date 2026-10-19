@@ -24,20 +24,14 @@ ArchitecturesInstallIn64BitMode={#GetEnv('ARCH')}
 ;ArchitecturesInstallIn64BitMode=arm64
 
 [Files]
-; Test builds may share the same version resource. Always replace our own binaries,
-; but retain normal version checks for bundled third-party runtime files.
+; Replace our same-version test builds; retain version checks for third-party files.
 Source: "{#InstallerSourceDir}\pcbu_desktop.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#InstallerSourceDir}\pcbu_elevator.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#InstallerSourceDir}\pcbu_storage_test.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#InstallerSourceDir}\*"; DestDir: "{app}"; Excludes: "pcbu_desktop.exe,pcbu_elevator.exe,pcbu_storage_test.exe"; Flags: recursesubdirs
 
 [InstallDelete]
 Type: filesandordirs; Name: "{commonprograms}\PC Bio Unlock"
 Type: filesandordirs; Name: "{userprograms}\PC Bio Unlock"
-
-[UninstallDelete]
-Type: files; Name: "{win}\System32\win-pcbiounlock.dll"
-Type: files; Name: "{win}\System32\win_pulseunlock.dll"
 
 [Icons]
 Name: "{group}\PulseUnlock"; Filename: "{app}\pcbu_desktop.exe"
@@ -89,6 +83,27 @@ end;
 procedure InitializeWizard;
 begin
   DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), @OnDownloadProgress);
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+  if not UninstallSilent then
+    if MsgBox('Remove PulseUnlock and unregister its Windows sign-in provider? Local pairings and settings will be kept.', mbConfirmation, MB_YESNO) <> IDYES then
+      Exit;
+  if not ShellExec('runas', ExpandConstant('{app}\pcbu_elevator.exe'), '--uninstall-system', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    SuppressibleMsgBox('System cleanup could not start (stage: helper launch). Uninstall was cancelled; the application and helper have been kept.', mbCriticalError, MB_OK, IDOK);
+    Exit;
+  end;
+  if ResultCode <> 0 then
+  begin
+    SuppressibleMsgBox('System cleanup failed (stage: REMOVE_PROVIDER or REMOVE_FIREWALL; helper exit code ' + IntToStr(ResultCode) + '). Uninstall was cancelled; the application and helper have been kept.', mbCriticalError, MB_OK, IDOK);
+    Exit;
+  end;
+  Result := True;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

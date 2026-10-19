@@ -1,5 +1,7 @@
 {
   "product_name": "PulseUnlock",
+  "provider_setup_hint": "Windows 安装程序只安装应用程序。请在此点击“安装”以启用 Android 登录。已保存的设备并不代表登录模块已安装。",
+  "provider_status_unverified": "需要处理：无法验证模块状态。请点击“重新安装”重试设置；现有记录将保留。",
   "initializing": "初始化中...",
   "password": "密码",
   "retry": "重试",
